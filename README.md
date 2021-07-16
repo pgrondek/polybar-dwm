@@ -172,6 +172,9 @@ label-title-padding = 2
 label-title-foreground = ${colors.primary}
 label-title-maxlen = 30
 
+; Defaults to 'Desktop'
+label-title-default = "Desktop"
+
 ; Symbol of current layout
 ; Available tokens:
 ;   %symbol%
