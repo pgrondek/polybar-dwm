@@ -1,19 +1,8 @@
-#include "common/test.hpp"
 #include "utils/math.hpp"
 
+#include "common/test.hpp"
+
 using namespace polybar;
-
-TEST(Math, min) {
-  EXPECT_EQ(2, math_util::min<int>(2, 5));
-  EXPECT_EQ(-50, math_util::min<int>(-8, -50));
-  EXPECT_EQ(0, math_util::min<unsigned char>(0, -5));
-}
-
-TEST(Math, max) {
-  EXPECT_EQ(5, math_util::max<int>(2, 5));
-  EXPECT_EQ(-8, math_util::max<int>(-8, -50));
-  EXPECT_EQ(251, math_util::max<unsigned char>(0, (1 << 8) - 5));
-}
 
 TEST(Math, cap) {
   EXPECT_EQ(8, math_util::cap<int>(8, 0, 10));
@@ -38,7 +27,7 @@ TEST(Math, percentage) {
   EXPECT_EQ(55.0f, (math_util::percentage<float, float>(5.5f, 0.0f, 10.0f)));
   EXPECT_EQ(56, (math_util::percentage<float, int>(5.55f, 0.0f, 10.0f)));
   EXPECT_EQ(43.75f, (math_util::percentage<float, float>(5.25f, 0.0f, 12.0f)));
-  EXPECT_EQ(41, (math_util::percentage<int, int>(5, 0, 12)));
+  EXPECT_EQ(42, (math_util::percentage<int, int>(5, 0, 12)));
   EXPECT_EQ(20.5f, (math_util::percentage<float, float>(20.5f, 0.0f, 100.0f)));
   EXPECT_EQ(70.0f, (math_util::percentage<float, float>(4.5f, 1.0f, 6.0f)));
   EXPECT_EQ(21, (math_util::percentage<float, int>(20.5f, 0.0f, 100.0f)));

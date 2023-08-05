@@ -54,6 +54,14 @@ namespace cairo {
     double h;
     struct radius radius;
   };
+  struct circle_segment {
+    double x;
+    double y;
+    double w;
+    double angle_from;
+    double angle_to;
+    double radius;
+  };
   struct textblock {
     alignment align;
     string contents;

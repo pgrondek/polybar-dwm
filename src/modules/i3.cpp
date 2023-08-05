@@ -5,7 +5,6 @@
 #include "drawtypes/iconset.hpp"
 #include "drawtypes/label.hpp"
 #include "modules/meta/base.inl"
-#include "utils/factory.hpp"
 #include "utils/file.hpp"
 
 POLYBAR_NS
@@ -14,13 +13,17 @@ namespace modules {
   template class module<i3_module>;
 
   i3_module::i3_module(const bar_settings& bar, string name_) : event_module<i3_module>(bar, move(name_)) {
+    m_router->register_action_with_data(EVENT_FOCUS, [this](const std::string& data) { action_focus(data); });
+    m_router->register_action(EVENT_NEXT, [this]() { action_next(); });
+    m_router->register_action(EVENT_PREV, [this]() { action_prev(); });
+
     auto socket_path = i3ipc::get_socketpath();
 
     if (!file_util::exists(socket_path)) {
       throw module_error("Could not find socket: " + (socket_path.empty() ? "<empty>" : socket_path));
     }
 
-    m_ipc = factory_util::unique<i3ipc::connection>();
+    m_ipc = std::make_unique<i3ipc::connection>();
 
     // Load configuration values
     m_click = m_conf.get(name(), "enable-click", m_click);
@@ -29,6 +32,7 @@ namespace modules {
     m_wrap = m_conf.get(name(), "wrapping-scroll", m_wrap);
     m_indexsort = m_conf.get(name(), "index-sort", m_indexsort);
     m_pinworkspaces = m_conf.get(name(), "pin-workspaces", m_pinworkspaces);
+    m_show_urgent = m_conf.get(name(), "show-urgent", m_show_urgent);
     m_strip_wsnumbers = m_conf.get(name(), "strip-wsnumbers", m_strip_wsnumbers);
     m_fuzzy_match = m_conf.get(name(), "fuzzy-match", m_fuzzy_match);
 
@@ -54,14 +58,19 @@ namespace modules {
 
     m_labelseparator = load_optional_label(m_conf, name(), "label-separator", "");
 
-    m_icons = factory_util::shared<iconset>();
-    m_icons->add(DEFAULT_WS_ICON, factory_util::shared<label>(m_conf.get(name(), DEFAULT_WS_ICON, ""s)));
+    m_icons = std::make_shared<iconset>();
+    m_icons->add(DEFAULT_WS_ICON, std::make_shared<label>(m_conf.get(name(), DEFAULT_WS_ICON, ""s)));
 
+    int i = 0;
     for (const auto& workspace : m_conf.get_list<string>(name(), "ws-icon", {})) {
       auto vec = string_util::tokenize(workspace, ';');
       if (vec.size() == 2) {
-        m_icons->add(vec[0], factory_util::shared<label>(vec[1]));
+        m_icons->add(vec[0], std::make_shared<label>(vec[1]));
+      } else {
+        m_log.err("%s: Ignoring ws-icon-%d because it has %s semicolons", name(), i, vec.size() > 2? "too many" : "too few");
       }
+
+      i++;
     }
 
     try {
@@ -128,7 +137,7 @@ namespace modules {
       vector<shared_ptr<i3_util::workspace_t>> workspaces;
 
       if (m_pinworkspaces) {
-        workspaces = i3_util::workspaces(ipc, m_bar.monitor->name);
+        workspaces = i3_util::workspaces(ipc, m_bar.monitor->name, m_show_urgent);
       } else {
         workspaces = i3_util::workspaces(ipc);
       }
@@ -168,7 +177,7 @@ namespace modules {
         label->replace_token("%name%", ws_name);
         label->replace_token("%icon%", icon->get());
         label->replace_token("%index%", to_string(ws->num));
-        m_workspaces.emplace_back(factory_util::unique<workspace>(ws->name, ws_state, move(label)));
+        m_workspaces.emplace_back(std::make_unique<workspace>(ws->name, ws_state, move(label)));
       }
 
       return true;
@@ -217,51 +226,46 @@ namespace modules {
     return true;
   }
 
-  bool i3_module::input(const string& action, const string& data) {
-    try {
-      const i3_util::connection_t conn{};
+  void i3_module::action_focus(const string& ws) {
+    const i3_util::connection_t conn{};
+    m_log.info("%s: Sending workspace focus command to ipc handler", name());
+    conn.send_command(make_workspace_command(ws));
+  }
 
-      if (action == EVENT_FOCUS) {
-        m_log.info("%s: Sending workspace focus command to ipc handler", name());
-        conn.send_command(make_workspace_command(data));
-        return true;
-      }
+  void i3_module::action_next() {
+    focus_direction(true);
+  }
 
-      if (action != EVENT_NEXT && action != EVENT_PREV) {
-        return false;
-      }
+  void i3_module::action_prev() {
+    focus_direction(false);
+  }
 
-      bool next = action == EVENT_NEXT;
+  void i3_module::focus_direction(bool next) {
+    const i3_util::connection_t conn{};
 
-      auto workspaces = i3_util::workspaces(conn, m_bar.monitor->name);
-      auto current_ws = std::find_if(workspaces.begin(), workspaces.end(), [](auto ws) { return ws->visible; });
+    auto workspaces = i3_util::workspaces(conn, m_bar.monitor->name);
+    auto current_ws = std::find_if(workspaces.begin(), workspaces.end(), [](auto ws) { return ws->visible; });
 
-      if (current_ws == workspaces.end()) {
-        m_log.warn("%s: Current workspace not found", name());
-        return false;
-      }
-
-      if (next && (m_wrap || std::next(current_ws) != workspaces.end())) {
-        if (!(*current_ws)->focused) {
-          m_log.info("%s: Sending workspace focus command to ipc handler", name());
-          conn.send_command(make_workspace_command((*current_ws)->name));
-        }
-        m_log.info("%s: Sending workspace next_on_output command to ipc handler", name());
-        conn.send_command("workspace next_on_output");
-      } else if (!next && (m_wrap || current_ws != workspaces.begin())) {
-        if (!(*current_ws)->focused) {
-          m_log.info("%s: Sending workspace focus command to ipc handler", name());
-          conn.send_command(make_workspace_command((*current_ws)->name));
-        }
-        m_log.info("%s: Sending workspace prev_on_output command to ipc handler", name());
-        conn.send_command("workspace prev_on_output");
-      }
-
-    } catch (const exception& err) {
-      m_log.err("%s: %s", name(), err.what());
+    if (current_ws == workspaces.end()) {
+      m_log.warn("%s: Current workspace not found", name());
+      return;
     }
 
-    return true;
+    if (next && (m_wrap || std::next(current_ws) != workspaces.end())) {
+      if (!(*current_ws)->focused) {
+        m_log.info("%s: Sending workspace focus command to ipc handler", name());
+        conn.send_command(make_workspace_command((*current_ws)->name));
+      }
+      m_log.info("%s: Sending workspace next_on_output command to ipc handler", name());
+      conn.send_command("workspace next_on_output");
+    } else if (!next && (m_wrap || current_ws != workspaces.begin())) {
+      if (!(*current_ws)->focused) {
+        m_log.info("%s: Sending workspace focus command to ipc handler", name());
+        conn.send_command(make_workspace_command((*current_ws)->name));
+      }
+      m_log.info("%s: Sending workspace prev_on_output command to ipc handler", name());
+      conn.send_command("workspace prev_on_output");
+    }
   }
 
   string i3_module::make_workspace_command(const string& workspace) {

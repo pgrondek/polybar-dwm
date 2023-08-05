@@ -1,7 +1,8 @@
+#include "utils/inotify.hpp"
+
 #include <unistd.h>
 
 #include "errors.hpp"
-#include "utils/inotify.hpp"
 #include "utils/memory.hpp"
 
 POLYBAR_NS
@@ -50,7 +51,7 @@ void inotify_watch::remove(bool force) {
 /**
  * Poll the inotify fd for events
  *
- * \brief A wait_ms of -1 blocks until an event is fired
+ * @brief A wait_ms of -1 blocks until an event is fired
  */
 bool inotify_watch::poll(int wait_ms) const {
   if (m_fd == -1) {
@@ -70,7 +71,7 @@ bool inotify_watch::poll(int wait_ms) const {
  * Get the latest inotify event
  */
 unique_ptr<inotify_event> inotify_watch::get_event() const {
-  auto event = factory_util::unique<inotify_event>();
+  auto event = std::make_unique<inotify_event>();
 
   if (m_fd == -1 || m_wd == -1) {
     return event;

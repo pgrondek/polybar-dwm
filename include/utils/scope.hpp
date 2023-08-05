@@ -1,11 +1,6 @@
 #pragma once
 
-// TODO: move to functional.hpp
-
 #include "common.hpp"
-
-#include "components/logger.hpp"
-#include "utils/factory.hpp"
 
 POLYBAR_NS
 
@@ -28,17 +23,17 @@ namespace scope_util {
    * leaving the object's scope (i.e, when it gets destroyed)
    *
    * Example usage:
-   * \code cpp
+   * @code cpp
    *   {
    *     auto handler = scope_util::make_exit_handler([]{ ... })
    *     ...
    *   }
-   * \endcode
+   * @endcode
    */
   template <typename Fn = function<void()>, typename... Args>
   decltype(auto) make_exit_handler(Fn&& fn, Args&&... args) {
-    return factory_util::unique<on_exit<Args...>>(forward<Fn>(fn), forward<Args>(args)...);
+    return std::make_unique<on_exit<Args...>>(forward<Fn>(fn), forward<Args>(args)...);
   }
-}
+}  // namespace scope_util
 
 POLYBAR_NS_END

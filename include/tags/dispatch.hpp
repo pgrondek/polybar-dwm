@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "components/renderer_interface.hpp"
 #include "errors.hpp"
 
 POLYBAR_NS
@@ -22,20 +23,23 @@ namespace tags {
   class dispatch {
    public:
     using make_type = unique_ptr<dispatch>;
-    static make_type make();
+    static make_type make(action_context& action_ctxt);
 
-    explicit dispatch(signal_emitter& emitter, const logger& logger);
-    void parse(const bar_settings& bar, string data);
+    explicit dispatch(const logger& logger, action_context& action_ctxt);
+    void parse(const bar_settings& bar, renderer_interface&, const string&& data);
 
    protected:
-    void text(string&& data);
-    void handle_action(mousebtn btn, bool closing, const string&& cmd);
+    void handle_text(renderer_interface& renderer, string&& data);
+    void handle_action(renderer_interface& renderer, mousebtn btn, bool closing, const string&& cmd);
+    void handle_offset(renderer_interface& renderer, extent_val offset);
+    void handle_control(controltag ctrl);
 
    private:
-    signal_emitter& m_sig;
-    vector<mousebtn> m_actions;
     const logger& m_log;
+
+    unique_ptr<context> m_ctxt;
+    action_context& m_action_ctxt;
   };
-}  // namespace tags
+} // namespace tags
 
 POLYBAR_NS_END

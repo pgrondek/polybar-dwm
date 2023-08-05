@@ -48,8 +48,6 @@ usage() {
           Remove existing build dir; disabled by default.
       ${COLORS[GREEN]}-I, --no-install${COLORS[OFF]}
           Do not execute 'sudo make install'; enabled by default.
-      ${COLORS[GREEN]}-C, --install-config${COLORS[OFF]}
-          Install example configuration; disabled by default.
       ${COLORS[GREEN]}-A, --auto${COLORS[OFF]}
           Automatic, non-interactive installation; disabled by default.
           When set, script defaults options not explicitly set.
@@ -72,7 +70,6 @@ install() {
 
   if [[ "$AUTO" == ON ]]; then
     [[ -z "$INSTALL" ]] && INSTALL="ON"
-    [[ -z "$INSTALL_CONF" ]] && INSTALL_CONF="OFF"
   fi
 
   if [[ -z "$INSTALL" ]]; then
@@ -80,18 +77,8 @@ install() {
     [[ "${p^^}" != "N" ]] && INSTALL="ON" || INSTALL="OFF"
   fi
 
-  if [[ -z "$INSTALL_CONF" ]]; then
-    read -r -p "$(msg "Install example configuration? [y/N]: ")" -n 1 p && echo
-    [[ "${p^^}" != "Y" ]] && INSTALL_CONF="OFF" || INSTALL_CONF="ON"
-  fi
-
-
   if [[ "$INSTALL" == ON ]]; then
     sudo make install || msg_err "Failed to install executables..."
-  fi
-
-  if [[ "$INSTALL_CONF" == ON ]]; then
-    make userconfig || msg_err "Failed to install user configuration..."
   fi
 }
 
@@ -157,10 +144,10 @@ set_build_opts() {
     read -r -p "$(msg "Build \"polybar-msg\" used to send ipc messages ------------------ [y/N]: ")" -n 1 p && echo
     [[ "${p^^}" != "Y" ]] && ENABLE_IPC_MSG="OFF" || ENABLE_IPC_MSG="ON"
   fi
-  
+
   if [[ -z "$JOB_COUNT" ]]; then
-	read -r -p "$(msg "Parallelize the build using make -j$(nproc) --------------------------- [y/N]: ")" -n 1 p && echo
-	[[ "${p^^}" != "Y" ]] && JOB_COUNT=1 || JOB_COUNT=$(nproc)
+    read -r -p "$(msg "Parallelize the build using make -j$(nproc) --------------------------- [y/N]: ")" -n 1 p && echo
+    [[ "${p^^}" != "Y" ]] && JOB_COUNT=1 || JOB_COUNT=$(nproc)
   fi
 
 
@@ -209,14 +196,14 @@ main() {
     -DENABLE_MPD:BOOL="${ENABLE_MPD}"         \
     -DENABLE_NETWORK:BOOL="${ENABLE_NETWORK}" \
     -DENABLE_CURL:BOOL="${ENABLE_CURL}"       \
-    -DBUILD_IPC_MSG:BOOL="${ENABLE_IPC_MSG}"   \
+    -DBUILD_POLYBAR_MSG:BOOL="${ENABLE_IPC_MSG}"   \
     .. || msg_err "Failed to generate build... read output to get a hint of what went wrong"
 
   msg "Building project"
   if [ -z ${JOB_COUNT} ]; then
-	make || msg_err "Failed to build project"
+    make || msg_err "Failed to build project"
   else
-	make -j$JOB_COUNT || msg_err "Failed to build project"
+    make -j$JOB_COUNT || msg_err "Failed to build project"
   fi
   install
   msg "Build complete!"
@@ -260,13 +247,11 @@ while [[ "$1" == -* ]]; do
     -g|--gcc)
       USE_GCC=ON; shift ;;
     -j|--jobs)
-	  JOB_COUNT=$(nproc); shift ;;
+      JOB_COUNT=$(nproc); shift ;;
     -f)
       REMOVE_BUILD_DIR=ON; shift ;;
     -I|--no-install)
       INSTALL=OFF; shift ;;
-    -C|--install-config)
-      INSTALL_CONF=ON; shift ;;
     -A|--auto)
       AUTO=ON; shift ;;
     -h|--help)

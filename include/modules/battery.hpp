@@ -48,7 +48,7 @@ namespace modules {
    public:
     explicit battery_module(const bar_settings&, string);
 
-    void start();
+    void start() override;
     void teardown();
     void idle();
     bool on_event(inotify_event* event);
@@ -112,7 +112,7 @@ namespace modules {
     string m_timeformat;
     size_t m_unchanged{SKIP_N_UNCHANGED};
     chrono::duration<double> m_interval{};
-    chrono::system_clock::time_point m_lastpoll;
+    chrono::steady_clock::time_point m_lastpoll;
     thread m_subthread;
   };
 }  // namespace modules

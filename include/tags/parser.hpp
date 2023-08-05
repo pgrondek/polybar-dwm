@@ -24,7 +24,7 @@ namespace tags {
       msg.append(" (Context: '" + ctxt + "')");
     }
 
-    virtual const char* what() const noexcept {
+    virtual const char* what() const noexcept override {
       return msg.c_str();
     }
 
@@ -126,7 +126,7 @@ namespace tags {
 
     color_value parse_color();
     int parse_fontindex();
-    int parse_offset();
+    extent_val parse_offset();
     controltag parse_control();
     std::pair<action_value, string> parse_action();
     mousebtn parse_action_btn();

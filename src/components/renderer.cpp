@@ -1,12 +1,14 @@
 #include "components/renderer.hpp"
 
+#include <cassert>
+
 #include "cairo/context.hpp"
 #include "components/config.hpp"
 #include "events/signal.hpp"
 #include "events/signal_emitter.hpp"
 #include "events/signal_receiver.hpp"
-#include "utils/factory.hpp"
 #include "utils/math.hpp"
+#include "utils/units.hpp"
 #include "x11/atoms.hpp"
 #include "x11/background_manager.hpp"
 #include "x11/connection.hpp"
@@ -19,15 +21,16 @@ static constexpr double BLOCK_GAP{20.0};
 /**
  * Create instance
  */
-renderer::make_type renderer::make(const bar_settings& bar) {
+renderer::make_type renderer::make(const bar_settings& bar, tags::action_context& action_ctxt) {
   // clang-format off
-  return factory_util::unique<renderer>(
+  return std::make_unique<renderer>(
       connection::make(),
       signal_emitter::make(),
       config::make(),
       logger::make(),
       forward<decltype(bar)>(bar),
-      background_manager::make());
+      background_manager::make(),
+      action_ctxt);
   // clang-format on
 }
 
@@ -35,8 +38,9 @@ renderer::make_type renderer::make(const bar_settings& bar) {
  * Construct renderer instance
  */
 renderer::renderer(connection& conn, signal_emitter& sig, const config& conf, const logger& logger,
-    const bar_settings& bar, background_manager& background)
-    : m_connection(conn)
+    const bar_settings& bar, background_manager& background, tags::action_context& action_ctxt)
+    : renderer_interface(action_ctxt)
+    , m_connection(conn)
     , m_sig(sig)
     , m_conf(conf)
     , m_log(logger)
@@ -106,9 +110,9 @@ renderer::renderer(connection& conn, signal_emitter& sig, const config& conf, co
 
   m_log.trace("renderer: Allocate alignment blocks");
   {
-    m_blocks.emplace(alignment::LEFT, alignment_block{nullptr, 0.0, 0.0});
-    m_blocks.emplace(alignment::CENTER, alignment_block{nullptr, 0.0, 0.0});
-    m_blocks.emplace(alignment::RIGHT, alignment_block{nullptr, 0.0, 0.0});
+    m_blocks.emplace(alignment::LEFT, alignment_block{nullptr, 0.0, 0.0, 0.});
+    m_blocks.emplace(alignment::CENTER, alignment_block{nullptr, 0.0, 0.0, 0.});
+    m_blocks.emplace(alignment::RIGHT, alignment_block{nullptr, 0.0, 0.0, 0.});
   }
 
   m_log.trace("renderer: Allocate cairo components");
@@ -119,31 +123,6 @@ renderer::renderer(connection& conn, signal_emitter& sig, const config& conf, co
 
   m_log.trace("renderer: Load fonts");
   {
-    double dpi_x = 96, dpi_y = 96;
-    if (m_conf.has(m_conf.section(), "dpi")) {
-      dpi_x = dpi_y = m_conf.get<double>("dpi");
-    } else {
-      if (m_conf.has(m_conf.section(), "dpi-x")) {
-        dpi_x = m_conf.get<double>("dpi-x");
-      }
-      if (m_conf.has(m_conf.section(), "dpi-y")) {
-        dpi_y = m_conf.get<double>("dpi-y");
-      }
-    }
-
-    // dpi to be comptued
-    if (dpi_x <= 0 || dpi_y <= 0) {
-      auto screen = m_connection.screen();
-      if (dpi_x <= 0) {
-        dpi_x = screen->width_in_pixels * 25.4 / screen->width_in_millimeters;
-      }
-      if (dpi_y <= 0) {
-        dpi_y = screen->height_in_pixels * 25.4 / screen->height_in_millimeters;
-      }
-    }
-
-    m_log.info("Configured DPI = %gx%g", dpi_x, dpi_y);
-
     auto fonts = m_conf.get_list<string>(m_conf.section(), "font", {});
     if (fonts.empty()) {
       m_log.warn("No fonts specified, using fallback font \"fixed\"");
@@ -158,7 +137,7 @@ renderer::renderer(connection& conn, signal_emitter& sig, const config& conf, co
         offset = std::strtol(pattern.substr(pos + 1).c_str(), nullptr, 10);
         pattern.erase(pos);
       }
-      auto font = cairo::make_font(*m_context, string{pattern}, offset, dpi_x, dpi_y);
+      auto font = cairo::make_font(*m_context, string{pattern}, offset, m_bar.dpi_x, m_bar.dpi_y);
       m_log.notice("Loaded font \"%s\" (name=%s, offset=%i, file=%s)", pattern, font->name(), offset, font->file());
       *m_context << move(font);
     }
@@ -194,13 +173,6 @@ xcb_window_t renderer::window() const {
 }
 
 /**
- * Get completed action blocks
- */
-const vector<action_block> renderer::actions() const {
-  return m_actions;
-}
-
-/**
  * Begin render routine
  */
 void renderer::begin(xcb_rectangle_t rect) {
@@ -208,15 +180,7 @@ void renderer::begin(xcb_rectangle_t rect) {
 
   // Reset state
   m_rect = rect;
-  m_actions.clear();
-  m_attr.reset();
   m_align = alignment::NONE;
-
-  // Reset colors
-  m_bg = m_bar.background;
-  m_fg = m_bar.foreground;
-  m_ul = m_bar.underline.color;
-  m_ol = m_bar.overline.color;
 
   // Clear canvas
   m_context->save();
@@ -262,11 +226,6 @@ void renderer::begin(xcb_rectangle_t rect) {
 void renderer::end() {
   m_log.trace_x("renderer: end");
 
-  for (auto&& a : m_actions) {
-    a.start_x += block_x(a.align) + m_rect.x;
-    a.end_x += block_x(a.align) + m_rect.x;
-  }
-
   if (m_align != alignment::NONE) {
     m_log.trace_x("renderer: pop(%i)", static_cast<int>(m_align));
     m_context->pop(&m_blocks[m_align].pattern);
@@ -304,7 +263,7 @@ void renderer::end() {
   // the bar will be filled by the wallpaper creating illusion of transparency.
   if (m_pseudo_transparency) {
     cairo_pattern_t* barcontents{};
-    m_context->pop(&barcontents);  // corresponding push is in renderer::begin
+    m_context->pop(&barcontents); // corresponding push is in renderer::begin
 
     auto root_bg = m_background->get_surface();
     if (root_bg != nullptr) {
@@ -398,25 +357,6 @@ void renderer::flush() {
 
   highlight_clickable_areas();
 
-#if 0
-#ifdef DEBUG_SHADED
-  if (m_bar.shaded && m_bar.origin == edge::TOP) {
-    m_log.trace_x(
-        "renderer: copy pixmap (shaded=1, geom=%dx%d+%d+%d)", m_rect.width, m_rect.height, m_rect.x, m_rect.y);
-    auto geom = m_connection.get_geometry(m_window);
-    auto x1 = 0;
-    auto y1 = m_rect.height - m_bar.shade_size.h - m_rect.y - geom->height;
-    auto x2 = m_rect.x;
-    auto y2 = m_rect.y;
-    auto w = m_rect.width;
-    auto h = m_rect.height - m_bar.shade_size.h + geom->height;
-    m_connection.copy_area(m_pixmap, m_window, m_gcontext, x1, y1, x2, y2, w, h);
-    m_connection.flush();
-    return;
-  }
-#endif
-#endif
-
   m_surface->flush();
   m_connection.copy_area(m_pixmap, m_window, m_gcontext, 0, 0, 0, 0, m_bar.size.w, m_bar.size.h);
   m_connection.flush();
@@ -424,7 +364,7 @@ void renderer::flush() {
   if (!m_snapshot_dst.empty()) {
     try {
       m_surface->write_png(m_snapshot_dst);
-      m_log.info("Successfully wrote %s", m_snapshot_dst);
+      m_log.notice("Successfully wrote %s", m_snapshot_dst);
     } catch (const exception& err) {
       m_log.err("Failed to write snapshot (err: %s)", err.what());
     }
@@ -527,7 +467,7 @@ double renderer::block_y(alignment) const {
  * Get block width for given alignment
  */
 double renderer::block_w(alignment a) const {
-  return m_blocks.at(a).x;
+  return m_blocks.at(a).width;
 }
 
 /**
@@ -537,39 +477,13 @@ double renderer::block_h(alignment) const {
   return m_rect.height;
 }
 
-#if 0
-void renderer::reserve_space(edge side, unsigned int w) {
-  m_log.trace_x("renderer: reserve_space(%i, %i)", static_cast<int>(side), w);
-
-  m_cleararea.side = side;
-  m_cleararea.size = w;
-
-  switch (side) {
-    case edge::NONE:
-      break;
-    case edge::TOP:
-      m_rect.y += w;
-      m_rect.height -= w;
-      break;
-    case edge::BOTTOM:
-      m_rect.height -= w;
-      break;
-    case edge::LEFT:
-      m_rect.x += w;
-      m_rect.width -= w;
-      break;
-    case edge::RIGHT:
-      m_rect.width -= w;
-      break;
-    case edge::ALL:
-      m_rect.x += w;
-      m_rect.y += w;
-      m_rect.width -= w * 2;
-      m_rect.height -= w * 2;
-      break;
-  }
+void renderer::increase_x(double dx) {
+  m_blocks[m_align].x += dx;
+  /*
+   * The width only increases when x becomes larger than the old width.
+   */
+  m_blocks[m_align].width = std::max(m_blocks[m_align].width, m_blocks[m_align].x);
 }
-#endif
 
 /**
  * Fill background color
@@ -593,12 +507,12 @@ void renderer::fill_background() {
 /**
  * Fill overline color
  */
-void renderer::fill_overline(double x, double w) {
-  if (m_bar.overline.size && m_attr.test(static_cast<int>(tags::attribute::OVERLINE))) {
+void renderer::fill_overline(rgba color, double x, double w) {
+  if (m_bar.overline.size) {
     m_log.trace_x("renderer: overline(x=%f, w=%f)", x, w);
     m_context->save();
     *m_context << m_comp_ol;
-    *m_context << m_ol;
+    *m_context << color;
     *m_context << cairo::rect{x, static_cast<double>(m_rect.y), w, static_cast<double>(m_bar.overline.size)};
     m_context->fill();
     m_context->restore();
@@ -608,12 +522,12 @@ void renderer::fill_overline(double x, double w) {
 /**
  * Fill underline color
  */
-void renderer::fill_underline(double x, double w) {
-  if (m_bar.underline.size && m_attr.test(static_cast<int>(tags::attribute::UNDERLINE))) {
+void renderer::fill_underline(rgba color, double x, double w) {
+  if (m_bar.underline.size) {
     m_log.trace_x("renderer: underline(x=%f, w=%f)", x, w);
     m_context->save();
     *m_context << m_comp_ul;
-    *m_context << m_ul;
+    *m_context << color;
     *m_context << cairo::rect{x, static_cast<double>(m_rect.y + m_rect.height - m_bar.underline.size), w,
         static_cast<double>(m_bar.underline.size)};
     m_context->fill();
@@ -628,11 +542,69 @@ void renderer::fill_borders() {
   m_context->save();
   *m_context << m_comp_border;
 
+  // Draw round border corners
+
+  if (m_bar.radius.top_left) {
+    cairo::circle_segment borderTL;
+    borderTL.radius = m_bar.borders.at(edge::LEFT).size + m_bar.radius.top_left;
+    borderTL.x = m_bar.borders.at(edge::LEFT).size + m_bar.radius.top_left;
+    borderTL.y = m_bar.borders.at(edge::TOP).size + m_bar.radius.top_left;
+    borderTL.angle_from = 180;
+    borderTL.angle_to = 270;
+    borderTL.w = m_bar.borders.at(edge::LEFT).size;
+    (*m_context << borderTL << m_bar.borders.at(edge::LEFT).color).fill();
+  }
+
+  if (m_bar.radius.bottom_left) {
+    cairo::circle_segment borderBL;
+    borderBL.radius = m_bar.borders.at(edge::LEFT).size + m_bar.radius.bottom_left;
+    borderBL.x = m_bar.borders.at(edge::LEFT).size + m_bar.radius.bottom_left;
+    borderBL.y = m_bar.size.h - (m_bar.borders.at(edge::BOTTOM).size + m_bar.radius.bottom_left);
+    borderBL.angle_from = 90;
+    borderBL.angle_to = 180;
+    borderBL.w = m_bar.borders.at(edge::LEFT).size;
+    (*m_context << borderBL << m_bar.borders.at(edge::LEFT).color).fill();
+  }
+
+  if (m_bar.radius.top_right) {
+    cairo::circle_segment borderTR;
+    borderTR.radius = m_bar.borders.at(edge::RIGHT).size + m_bar.radius.top_right;
+    borderTR.x = m_bar.size.w - (m_bar.borders.at(edge::RIGHT).size + m_bar.radius.top_right);
+    borderTR.y = m_bar.borders.at(edge::TOP).size + m_bar.radius.top_right;
+    borderTR.angle_from = -90;
+    borderTR.angle_to = 0;
+    borderTR.w = m_bar.borders.at(edge::RIGHT).size;
+    (*m_context << borderTR << m_bar.borders.at(edge::RIGHT).color).fill();
+  }
+
+  if (m_bar.radius.bottom_right) {
+    cairo::circle_segment borderBR;
+    borderBR.radius = m_bar.borders.at(edge::RIGHT).size + m_bar.radius.bottom_right;
+    borderBR.x = m_bar.size.w - (m_bar.borders.at(edge::RIGHT).size + m_bar.radius.bottom_right);
+    borderBR.y = m_bar.size.h - (m_bar.borders.at(edge::BOTTOM).size + m_bar.radius.bottom_right);
+    borderBR.angle_from = 0;
+    borderBR.angle_to = 90;
+    borderBR.w = m_bar.borders.at(edge::RIGHT).size;
+    (*m_context << borderBR << m_bar.borders.at(edge::RIGHT).color).fill();
+  }
+
+  // Draw straight horizontal / vertical borders
+
   if (m_bar.borders.at(edge::TOP).size) {
     cairo::rect top{0.0, 0.0, 0.0, 0.0};
     top.x += m_bar.borders.at(edge::LEFT).size;
     top.w += m_bar.size.w - m_bar.borders.at(edge::LEFT).size - m_bar.borders.at(edge::RIGHT).size;
     top.h += m_bar.borders.at(edge::TOP).size;
+
+    if (m_bar.radius.top_left) {
+      top.x += m_bar.radius.top_left;
+      top.w -= m_bar.radius.top_left;
+    }
+
+    if (m_bar.radius.top_right) {
+      top.w -= m_bar.radius.top_right;
+    }
+
     m_log.trace_x("renderer: border T(%.0f, #%08x)", top.h, m_bar.borders.at(edge::TOP).color);
     (*m_context << top << m_bar.borders.at(edge::TOP).color).fill();
   }
@@ -643,6 +615,16 @@ void renderer::fill_borders() {
     bottom.y += m_bar.size.h - m_bar.borders.at(edge::BOTTOM).size;
     bottom.w += m_bar.size.w - m_bar.borders.at(edge::LEFT).size - m_bar.borders.at(edge::RIGHT).size;
     bottom.h += m_bar.borders.at(edge::BOTTOM).size;
+
+    if (m_bar.radius.bottom_left) {
+      bottom.x += m_bar.radius.bottom_left;
+      bottom.w -= m_bar.radius.bottom_left;
+    }
+
+    if (m_bar.radius.bottom_right) {
+      bottom.w -= m_bar.radius.bottom_right;
+    }
+
     m_log.trace_x("renderer: border B(%.0f, #%08x)", bottom.h, m_bar.borders.at(edge::BOTTOM).color);
     (*m_context << bottom << m_bar.borders.at(edge::BOTTOM).color).fill();
   }
@@ -651,6 +633,16 @@ void renderer::fill_borders() {
     cairo::rect left{0.0, 0.0, 0.0, 0.0};
     left.w += m_bar.borders.at(edge::LEFT).size;
     left.h += m_bar.size.h;
+
+    if (m_bar.radius.top_left) {
+      left.y += m_bar.radius.top_left + m_bar.borders.at(edge::TOP).size;
+      left.h -= m_bar.radius.top_left + m_bar.borders.at(edge::TOP).size;
+    }
+
+    if (m_bar.radius.bottom_left) {
+      left.h -= m_bar.radius.bottom_left + m_bar.borders.at(edge::BOTTOM).size;
+    }
+
     m_log.trace_x("renderer: border L(%.0f, #%08x)", left.w, m_bar.borders.at(edge::LEFT).color);
     (*m_context << left << m_bar.borders.at(edge::LEFT).color).fill();
   }
@@ -660,6 +652,16 @@ void renderer::fill_borders() {
     right.x += m_bar.size.w - m_bar.borders.at(edge::RIGHT).size;
     right.w += m_bar.borders.at(edge::RIGHT).size;
     right.h += m_bar.size.h;
+
+    if (m_bar.radius.top_right) {
+      right.y += m_bar.radius.top_right + m_bar.borders.at(edge::TOP).size;
+      right.h -= m_bar.radius.top_right + m_bar.borders.at(edge::TOP).size;
+    }
+
+    if (m_bar.radius.bottom_right) {
+      right.h -= m_bar.radius.bottom_right + m_bar.borders.at(edge::BOTTOM).size;
+    }
+
     m_log.trace_x("renderer: border R(%.0f, #%08x)", right.w, m_bar.borders.at(edge::RIGHT).color);
     (*m_context << right << m_bar.borders.at(edge::RIGHT).color).fill();
   }
@@ -670,27 +672,35 @@ void renderer::fill_borders() {
 /**
  * Draw text contents
  */
-void renderer::draw_text(const string& contents) {
+void renderer::render_text(const tags::context& ctxt, const string&& contents) {
   m_log.trace_x("renderer: text(%s)", contents.c_str());
 
   cairo::abspos origin{};
   origin.x = m_rect.x + m_blocks[m_align].x;
   origin.y = m_rect.y + m_rect.height / 2.0;
 
+  double x_old = m_blocks[m_align].x;
+  /*
+   * This variable is increased by the text renderer
+   */
+  double x_new = x_old;
+
   cairo::textblock block{};
   block.align = m_align;
   block.contents = contents;
-  block.font = m_font;
-  block.x_advance = &m_blocks[m_align].x;
+  block.font = ctxt.get_font();
+  block.x_advance = &x_new;
   block.y_advance = &m_blocks[m_align].y;
   block.bg_rect = cairo::rect{0.0, 0.0, 0.0, 0.0};
+
+  rgba bg = ctxt.get_bg();
 
   // Only draw text background if the color differs from
   // the background color of the bar itself
   // Note: this means that if the user explicitly set text
   // background color equal to background-0 it will be ignored
-  if (m_bg != m_bar.background) {
-    block.bg = m_bg;
+  if (bg != m_bar.background) {
+    block.bg = bg;
     block.bg_operator = m_comp_bg;
     block.bg_rect.x = m_rect.x;
     block.bg_rect.y = m_rect.y;
@@ -700,94 +710,60 @@ void renderer::draw_text(const string& contents) {
   m_context->save();
   *m_context << origin;
   *m_context << m_comp_fg;
-  *m_context << m_fg;
+  *m_context << ctxt.get_fg();
   *m_context << block;
   m_context->restore();
 
-  double dx = m_rect.x + m_blocks[m_align].x - origin.x;
+  double dx = x_new - x_old;
+  increase_x(dx);
+
   if (dx > 0.0) {
-    fill_underline(origin.x, dx);
-    fill_overline(origin.x, dx);
-  }
-}
+    if (ctxt.has_underline()) {
+      fill_underline(ctxt.get_ul(), origin.x, dx);
+    }
 
-/**
- * Colorize the bounding box of created action blocks
- */
-void renderer::highlight_clickable_areas() {
-#ifdef DEBUG_HINTS
-  map<alignment, int> hint_num{};
-  for (auto&& action : m_actions) {
-    if (!action.active) {
-      int n = hint_num.find(action.align)->second++;
-      double x = action.start_x;
-      double y = m_rect.y;
-      double w = action.width();
-      double h = m_rect.height;
-
-      m_context->save();
-      *m_context << CAIRO_OPERATOR_DIFFERENCE << (n % 2 ? 0xFF00FF00 : 0xFFFF0000);
-      *m_context << cairo::rect{x, y, w, h};
-      m_context->fill();
-      m_context->restore();
+    if (ctxt.has_overline()) {
+      fill_overline(ctxt.get_ol(), origin.x, dx);
     }
   }
-  m_surface->flush();
-#endif
 }
 
-bool renderer::on(const signals::ui::request_snapshot& evt) {
-  m_snapshot_dst = evt.cast();
-  return true;
-}
-
-bool renderer::on(const signals::parser::change_background& evt) {
-  const rgba color{evt.cast()};
-  if (color != m_bg) {
-    m_log.trace_x("renderer: change_background(#%08x)", color);
-    m_bg = color;
+void renderer::draw_offset(const tags::context& ctxt, rgba color, double x, double w) {
+  if (w <= 0) {
+    return;
   }
-  return true;
-}
 
-bool renderer::on(const signals::parser::change_foreground& evt) {
-  const rgba color{evt.cast()};
-  if (color != m_fg) {
-    m_log.trace_x("renderer: change_foreground(#%08x)", color);
-    m_fg = color;
+  if (color != m_bar.background) {
+    m_log.trace_x("renderer: offset(x=%f, w=%f)", x, w);
+    m_context->save();
+    *m_context << m_comp_bg;
+    *m_context << color;
+    *m_context << cairo::rect{
+        m_rect.x + x, static_cast<double>(m_rect.y), w, static_cast<double>(m_rect.y + m_rect.height)};
+    m_context->fill();
+    m_context->restore();
   }
-  return true;
-}
 
-bool renderer::on(const signals::parser::change_underline& evt) {
-  const rgba color{evt.cast()};
-  if (color != m_ul) {
-    m_log.trace_x("renderer: change_underline(#%08x)", color);
-    m_ul = color;
+  if (ctxt.has_underline()) {
+    fill_underline(ctxt.get_ul(), x, w);
   }
-  return true;
-}
 
-bool renderer::on(const signals::parser::change_overline& evt) {
-  const rgba color{evt.cast()};
-  if (color != m_ol) {
-    m_log.trace_x("renderer: change_overline(#%08x)", color);
-    m_ol = color;
+  if (ctxt.has_overline()) {
+    fill_overline(ctxt.get_ol(), x, w);
   }
-  return true;
 }
 
-bool renderer::on(const signals::parser::change_font& evt) {
-  const int font{evt.cast()};
-  if (font != m_font) {
-    m_log.trace_x("renderer: change_font(%i)", font);
-    m_font = font;
-  }
-  return true;
+void renderer::render_offset(const tags::context& ctxt, const extent_val offset) {
+  m_log.trace_x("renderer: offset_pixel(%f)", offset);
+
+  int offset_width = units_utils::extent_to_pixel(offset, m_bar.dpi_x);
+  rgba bg = ctxt.get_bg();
+  draw_offset(ctxt, bg, m_blocks[m_align].x, offset_width);
+  increase_x(offset_width);
 }
 
-bool renderer::on(const signals::parser::change_alignment& evt) {
-  auto align = static_cast<const alignment&>(evt.cast());
+void renderer::change_alignment(const tags::context& ctxt) {
+  auto align = ctxt.get_alignment();
   if (align != m_align) {
     m_log.trace_x("renderer: change_alignment(%i)", static_cast<int>(align));
 
@@ -799,97 +775,47 @@ bool renderer::on(const signals::parser::change_alignment& evt) {
     m_align = align;
     m_blocks[m_align].x = 0.0;
     m_blocks[m_align].y = 0.0;
+    m_blocks[m_align].width = 0.;
     m_context->push();
     m_log.trace_x("renderer: push(%i)", static_cast<int>(m_align));
 
     fill_background();
   }
-  return true;
 }
 
-bool renderer::on(const signals::parser::reverse_colors&) {
-  m_log.trace_x("renderer: reverse_colors");
-  std::swap(m_fg, m_bg);
-  return true;
+double renderer::get_x(const tags::context& ctxt) const {
+  return m_blocks.at(ctxt.get_alignment()).x;
 }
 
-bool renderer::on(const signals::parser::offset_pixel& evt) {
-  m_log.trace_x("renderer: offset_pixel(%f)", evt.cast());
-  m_blocks[m_align].x += evt.cast();
-  return true;
+double renderer::get_alignment_start(const alignment align) const {
+  return block_x(align) + m_rect.x;
 }
 
-bool renderer::on(const signals::parser::attribute_set& evt) {
-  m_log.trace_x("renderer: attribute_set(%i)", static_cast<int>(evt.cast()));
-  m_attr.set(static_cast<int>(evt.cast()), true);
-  return true;
-}
+/**
+ * Colorize the bounding box of created action blocks
+ */
+void renderer::highlight_clickable_areas() {
+#ifdef DEBUG_HINTS
+  map<alignment, int> hint_num{};
+  for (auto&& action : m_action_ctxt.get_blocks()) {
+    int n = hint_num.find(action.align)->second++;
+    double x = action.start_x;
+    double y = m_rect.y;
+    double w = action.width();
+    double h = m_rect.height;
 
-bool renderer::on(const signals::parser::attribute_unset& evt) {
-  m_log.trace_x("renderer: attribute_unset(%i)", static_cast<int>(evt.cast()));
-  m_attr.set(static_cast<int>(evt.cast()), false);
-  return true;
-}
-
-bool renderer::on(const signals::parser::attribute_toggle& evt) {
-  m_log.trace_x("renderer: attribute_toggle(%i)", static_cast<int>(evt.cast()));
-  m_attr.flip(static_cast<int>(evt.cast()));
-  return true;
-}
-
-bool renderer::on(const signals::parser::action_begin& evt) {
-  auto a = evt.cast();
-  m_log.trace_x("renderer: action_begin(btn=%i, command=%s)", static_cast<int>(a.button), a.command);
-  action_block action{};
-  action.button = a.button == mousebtn::NONE ? mousebtn::LEFT : a.button;
-  action.align = m_align;
-  action.start_x = m_blocks.at(m_align).x;
-  action.command = a.command;
-  action.active = true;
-  m_actions.emplace_back(action);
-  return true;
-}
-
-bool renderer::on(const signals::parser::action_end& evt) {
-  auto btn = evt.cast();
-
-  /*
-   * Iterate actions in reverse and find the FIRST active action that matches
-   */
-  m_log.trace_x("renderer: action_end(btn=%i)", static_cast<int>(btn));
-  for (auto action = m_actions.rbegin(); action != m_actions.rend(); action++) {
-    if (action->active && action->align == m_align && action->button == btn) {
-      action->end_x = m_blocks.at(action->align).x;
-      action->active = false;
-      break;
-    }
+    m_context->save();
+    *m_context << CAIRO_OPERATOR_DIFFERENCE << (n % 2 ? rgba{0xFF00FF00} : rgba{0xFFFF0000});
+    *m_context << cairo::rect{x, y, w, h};
+    m_context->fill();
+    m_context->restore();
   }
-  return true;
+  m_surface->flush();
+#endif
 }
 
-bool renderer::on(const signals::parser::text& evt) {
-  auto text = evt.cast();
-  draw_text(text);
-  return true;
-}
-
-bool renderer::on(const signals::parser::control& evt) {
-  auto ctrl = evt.cast();
-
-  switch (ctrl) {
-    case tags::controltag::R:
-      m_bg = m_bar.background;
-      m_fg = m_bar.foreground;
-      m_ul = m_bar.underline.color;
-      m_ol = m_bar.overline.color;
-      m_font = 0;
-      m_attr.reset();
-      break;
-
-    case tags::controltag::NONE:
-      break;
-  }
-
+bool renderer::on(const signals::ui::request_snapshot& evt) {
+  m_snapshot_dst = evt.cast();
   return true;
 }
 

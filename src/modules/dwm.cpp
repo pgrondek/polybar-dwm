@@ -16,6 +16,10 @@ namespace modules {
   template class module<dwm_module>;
 
   dwm_module::dwm_module(const bar_settings& bar, string name_) : event_module<dwm_module>(bar, move(name_)) {
+    m_router->register_action_with_data(EVENT_LAYOUT_SET, [this](const std::string& data) { generic_action(EVENT_LAYOUT_SET,data); });
+    m_router->register_action_with_data(EVENT_TAG_VIEW, [this](const std::string& data) { generic_action(EVENT_TAG_VIEW,data);; });
+    m_router->register_action_with_data(EVENT_TAG_TOGGLE_VIEW, [this](const std::string& data) { generic_action(EVENT_TAG_TOGGLE_VIEW,data); });
+
     // Load configuration
     m_formatter->add(
         DEFAULT_FORMAT, DEFAULT_FORMAT_TAGS, {TAG_LABEL_TAGS, TAG_LABEL_LAYOUT, TAG_LABEL_FLOATING, TAG_LABEL_TITLE});
@@ -65,7 +69,7 @@ namespace modules {
     }
 
     try {
-      m_ipc = factory_util::unique<dwmipc::Connection>(m_socket_path);
+      m_ipc = std::make_unique<dwmipc::Connection>(m_socket_path);
       m_log.info("%s: Connected to dwm socket", name());
 
       update_monitor_ref();
@@ -262,7 +266,7 @@ namespace modules {
     return true;
   }
 
-  bool dwm_module::input(const string& action, const string& data) {
+  bool dwm_module::generic_action(const string& action, const string& data) {
     m_log.info("%s: Sending workspace %s command to ipc handler", name(), action);
 
     try {
@@ -278,6 +282,7 @@ namespace modules {
 
     return false;
   }
+
 
   dwm_module::state_t dwm_module::get_state(tag_mask_t bit_mask) const {
     /**

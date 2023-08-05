@@ -36,8 +36,12 @@ namespace modules {
     static constexpr const char* EVENT_DEC = "dec";
 
    protected:
-    void handle(const evt::randr_notify& evt);
-    bool input(const string& action, const string& data);
+    void handle(const evt::randr_notify& evt) override;
+
+    void action_inc();
+    void action_dec();
+
+    void change_value(int value_mod);
 
    private:
     static constexpr const char* TAG_LABEL{"<label>"};
@@ -53,7 +57,7 @@ namespace modules {
     progressbar_t m_progressbar;
 
     bool m_scroll{true};
-    std::atomic<int> m_percentage{0};
+    int m_percentage{0};
   };
 }  // namespace modules
 

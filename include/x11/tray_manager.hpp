@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 
@@ -31,6 +32,7 @@ POLYBAR_NS
 
 namespace chrono = std::chrono;
 using namespace std::chrono_literals;
+using std::atomic;
 
 // fwd declarations
 class connection;
@@ -38,9 +40,6 @@ class background_manager;
 class bg_slice;
 
 struct tray_settings {
-  tray_settings() = default;
-  tray_settings& operator=(const tray_settings& o) = default;
-
   alignment align{alignment::NONE};
   bool running{false};
   int rel_x{0};
@@ -59,6 +58,7 @@ struct tray_settings {
   unsigned int spacing{0U};
   unsigned int sibling{0U};
   rgba background{};
+  rgba foreground{};
   bool transparent{false};
   bool detached{false};
 };
@@ -119,21 +119,21 @@ class tray_manager : public xpp::event::sink<evt::expose, evt::visibility_notify
   void remove_client(xcb_window_t win, bool reconfigure = true);
   unsigned int mapped_clients() const;
 
-  void handle(const evt::expose& evt);
-  void handle(const evt::visibility_notify& evt);
-  void handle(const evt::client_message& evt);
-  void handle(const evt::configure_request& evt);
-  void handle(const evt::resize_request& evt);
-  void handle(const evt::selection_clear& evt);
-  void handle(const evt::property_notify& evt);
-  void handle(const evt::reparent_notify& evt);
-  void handle(const evt::destroy_notify& evt);
-  void handle(const evt::map_notify& evt);
-  void handle(const evt::unmap_notify& evt);
+  void handle(const evt::expose& evt) override;
+  void handle(const evt::visibility_notify& evt) override;
+  void handle(const evt::client_message& evt) override;
+  void handle(const evt::configure_request& evt) override;
+  void handle(const evt::resize_request& evt) override;
+  void handle(const evt::selection_clear& evt) override;
+  void handle(const evt::property_notify& evt) override;
+  void handle(const evt::reparent_notify& evt) override;
+  void handle(const evt::destroy_notify& evt) override;
+  void handle(const evt::map_notify& evt) override;
+  void handle(const evt::unmap_notify& evt) override;
 
-  bool on(const signals::ui::visibility_change& evt);
-  bool on(const signals::ui::dim_window& evt);
-  bool on(const signals::ui::update_background& evt);
+  bool on(const signals::ui::visibility_change& evt) override;
+  bool on(const signals::ui::dim_window& evt) override;
+  bool on(const signals::ui::update_background& evt) override;
 
  private:
   connection& m_connection;

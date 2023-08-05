@@ -6,7 +6,6 @@
 #include "drawtypes/label.hpp"
 #include "drawtypes/progressbar.hpp"
 #include "modules/meta/base.inl"
-#include "utils/factory.hpp"
 
 POLYBAR_NS
 
@@ -14,6 +13,17 @@ namespace modules {
   template class module<mpd_module>;
 
   mpd_module::mpd_module(const bar_settings& bar, string name_) : event_module<mpd_module>(bar, move(name_)) {
+    m_router->register_action(EVENT_PLAY, [this]() { action_play(); });
+    m_router->register_action(EVENT_PAUSE, [this]() { action_pause(); });
+    m_router->register_action(EVENT_STOP, [this]() { action_stop(); });
+    m_router->register_action(EVENT_PREV, [this]() { action_prev(); });
+    m_router->register_action(EVENT_NEXT, [this]() { action_next(); });
+    m_router->register_action(EVENT_REPEAT, [this]() { action_repeat(); });
+    m_router->register_action(EVENT_SINGLE, [this]() { action_single(); });
+    m_router->register_action(EVENT_RANDOM, [this]() { action_random(); });
+    m_router->register_action(EVENT_CONSUME, [this]() { action_consume(); });
+    m_router->register_action_with_data(EVENT_SEEK, [this](const std::string& data) { action_seek(data); });
+
     m_host = m_conf.get(name(), "host", m_host);
     m_port = m_conf.get(name(), "port", m_port);
     m_pass = m_conf.get(name(), "password", m_pass);
@@ -56,7 +66,7 @@ namespace modules {
 
     m_formatter->add(FORMAT_OFFLINE, "", {TAG_LABEL_OFFLINE});
 
-    m_icons = factory_util::shared<iconset>();
+    m_icons = std::make_shared<iconset>();
 
     if (m_formatter->has(TAG_ICON_PLAY) || m_formatter->has(TAG_TOGGLE) || m_formatter->has(TAG_TOGGLE_STOP)) {
       m_icons->add("play", load_label(m_conf, name(), TAG_ICON_PLAY));
@@ -119,10 +129,10 @@ namespace modules {
 
     // }}}
 
-    m_lastsync = chrono::system_clock::now();
+    m_lastsync = chrono::steady_clock::now();
 
     try {
-      m_mpd = factory_util::unique<mpdconnection>(m_log, m_host, m_port, m_pass);
+      m_mpd = std::make_unique<mpdconnection>(m_log, m_host, m_port, m_pass);
       m_mpd->connect();
       m_status = m_mpd->get_status();
     } catch (const mpd_exception& err) {
@@ -159,7 +169,7 @@ namespace modules {
 
     try {
       if (!m_mpd) {
-        m_mpd = factory_util::unique<mpdconnection>(m_log, m_host, m_port, m_pass);
+        m_mpd = std::make_unique<mpdconnection>(m_log, m_host, m_port, m_pass);
       }
       if (!connected()) {
         m_mpd->connect();
@@ -194,7 +204,7 @@ namespace modules {
     }
 
     if ((m_label_time || m_bar_progress) && m_status->match_state(mpdstate::PLAYING)) {
-      auto now = chrono::system_clock::now();
+      auto now = chrono::steady_clock::now();
       auto diff = now - m_lastsync;
 
       if (chrono::duration_cast<chrono::milliseconds>(diff).count() > m_synctime * 1000) {
@@ -243,7 +253,7 @@ namespace modules {
       if (m_mpd) {
         auto song = m_mpd->get_song();
 
-        if (song && song.get()) {
+        if (song) {
           artist = song->get_artist();
           album_artist = song->get_album_artist();
           album = song->get_album();
@@ -350,59 +360,93 @@ namespace modules {
     return true;
   }
 
-  bool mpd_module::input(const string& action, const string& data) {
-    m_log.info("%s: event: %s", name(), action);
+/**
+ * Small macro to create a temporary mpd connection for the action handlers.
+ *
+ * We have to create a separate mpd instance because actions run in the
+ * controller thread and the `m_mpd` pointer is used in the module thread.
+ */
+#define MPD_CONNECT()                                                        \
+  auto mpd = std::make_unique<mpdconnection>(m_log, m_host, m_port, m_pass); \
+  mpd->connect();                                                            \
+  auto status = mpd->get_status()
 
-    try {
-      auto mpd = factory_util::unique<mpdconnection>(m_log, m_host, m_port, m_pass);
-      mpd->connect();
-
-      auto status = mpd->get_status();
-
-      bool is_playing = status->match_state(mpdstate::PLAYING);
-      bool is_paused = status->match_state(mpdstate::PAUSED);
-      bool is_stopped = status->match_state(mpdstate::STOPPED);
-
-      if (action == EVENT_PLAY && !is_playing) {
-        mpd->play();
-      } else if (action == EVENT_PAUSE && !is_paused) {
-        mpd->pause(true);
-      } else if (action == EVENT_STOP && !is_stopped) {
-        mpd->stop();
-      } else if (action == EVENT_PREV && !is_stopped) {
-        mpd->prev();
-      } else if (action == EVENT_NEXT && !is_stopped) {
-        mpd->next();
-      } else if (action == EVENT_SINGLE) {
-        mpd->set_single(!status->single());
-      } else if (action == EVENT_REPEAT) {
-        mpd->set_repeat(!status->repeat());
-      } else if (action == EVENT_RANDOM) {
-        mpd->set_random(!status->random());
-      } else if (action == EVENT_CONSUME) {
-        mpd->set_consume(!status->consume());
-      } else if (action == EVENT_SEEK) {
-        int percentage = 0;
-        if (data.empty()) {
-          return false;
-        } else if (data[0] == '+') {
-          percentage = status->get_elapsed_percentage() + std::strtol(data.substr(1).c_str(), nullptr, 10);
-        } else if (data[0] == '-') {
-          percentage = status->get_elapsed_percentage() - std::strtol(data.substr(1).c_str(), nullptr, 10);
-        } else {
-          percentage = std::strtol(data.c_str(), nullptr, 10);
-        }
-        mpd->seek(status->get_songid(), status->get_seek_position(percentage));
-      } else {
-        return false;
-      }
-    } catch (const mpd_exception& err) {
-      m_log.err("%s: %s", name(), err.what());
-      m_mpd.reset();
+  void mpd_module::action_play() {
+    MPD_CONNECT();
+    if (!status->match_state(mpdstate::PLAYING)) {
+      mpd->play();
     }
-
-    return true;
   }
+
+  void mpd_module::action_pause() {
+    MPD_CONNECT();
+
+    if (!status->match_state(mpdstate::PAUSED)) {
+      mpd->pause(true);
+    }
+  }
+
+  void mpd_module::action_stop() {
+    MPD_CONNECT();
+
+    if (!status->match_state(mpdstate::STOPPED)) {
+      mpd->stop();
+    }
+  }
+
+  void mpd_module::action_prev() {
+    MPD_CONNECT();
+
+    if (!status->match_state(mpdstate::STOPPED)) {
+      mpd->prev();
+    }
+  }
+
+  void mpd_module::action_next() {
+    MPD_CONNECT();
+
+    if (!status->match_state(mpdstate::STOPPED)) {
+      mpd->next();
+    }
+  }
+
+  void mpd_module::action_repeat() {
+    MPD_CONNECT();
+    mpd->set_repeat(!status->repeat());
+  }
+
+  void mpd_module::action_single() {
+    MPD_CONNECT();
+    mpd->set_single(!status->single());
+  }
+
+  void mpd_module::action_random() {
+    MPD_CONNECT();
+    mpd->set_random(!status->random());
+  }
+
+  void mpd_module::action_consume() {
+    MPD_CONNECT();
+    mpd->set_consume(!status->consume());
+  }
+
+  void mpd_module::action_seek(const string& data) {
+    MPD_CONNECT();
+
+    int percentage = 0;
+    if (data.empty()) {
+      return;
+    } else if (data[0] == '+') {
+      percentage = status->get_elapsed_percentage() + std::strtol(data.substr(1).c_str(), nullptr, 10);
+    } else if (data[0] == '-') {
+      percentage = status->get_elapsed_percentage() - std::strtol(data.substr(1).c_str(), nullptr, 10);
+    } else {
+      percentage = std::strtol(data.c_str(), nullptr, 10);
+    }
+    mpd->seek(status->get_songid(), status->get_seek_position(percentage));
+  }
+
+#undef MPD_CONNECT
 }  // namespace modules
 
 POLYBAR_NS_END

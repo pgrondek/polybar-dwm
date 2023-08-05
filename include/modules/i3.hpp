@@ -15,19 +15,19 @@ namespace modules {
     enum class state {
       NONE,
       /**
-       * \brief Active workspace on focused monitor
+       * @brief Active workspace on focused monitor
        */
       FOCUSED,
       /**
-       * \brief Inactive workspace on any monitor
+       * @brief Inactive workspace on any monitor
        */
       UNFOCUSED,
       /**
-       * \brief Active workspace on unfocused monitor
+       * @brief Active workspace on unfocused monitor
        */
       VISIBLE,
       /**
-       * \brief Workspace with urgency hint set
+       * @brief Workspace with urgency hint set
        */
       URGENT,
     };
@@ -46,7 +46,7 @@ namespace modules {
    public:
     explicit i3_module(const bar_settings&, string);
 
-    void stop();
+    void stop() override;
     bool has_event();
     bool update();
     bool build(builder* builder, const string& tag) const;
@@ -58,7 +58,11 @@ namespace modules {
     static constexpr auto EVENT_PREV = "prev";
 
    protected:
-    bool input(const string& action, const string& data);
+    void action_focus(const string& ws);
+    void action_next();
+    void action_prev();
+
+    void focus_direction(bool next);
 
    private:
     static string make_workspace_command(const string& workspace);
@@ -89,6 +93,7 @@ namespace modules {
     bool m_wrap{true};
     bool m_indexsort{false};
     bool m_pinworkspaces{false};
+    bool m_show_urgent{false};
     bool m_strip_wsnumbers{false};
     bool m_fuzzy_match{false};
 

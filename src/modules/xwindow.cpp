@@ -1,10 +1,9 @@
 #include "modules/xwindow.hpp"
+
 #include "drawtypes/label.hpp"
-#include "utils/factory.hpp"
+#include "modules/meta/base.inl"
 #include "x11/atoms.hpp"
 #include "x11/connection.hpp"
-
-#include "modules/meta/base.inl"
 
 POLYBAR_NS
 
@@ -105,10 +104,6 @@ namespace modules {
    * Update the currently active window and query its title
    */
   void xwindow_module::update(bool force) {
-    std::lock(m_buildlock, m_updatelock);
-    std::lock_guard<std::mutex> guard_a(m_buildlock, std::adopt_lock);
-    std::lock_guard<std::mutex> guard_b(m_updatelock, std::adopt_lock);
-
     xcb_window_t win;
 
     if (force) {
@@ -132,12 +127,12 @@ namespace modules {
    * Output content as defined in the config
    */
   bool xwindow_module::build(builder* builder, const string& tag) const {
-    if (tag == TAG_LABEL && m_label && m_label.get()) {
+    if (tag == TAG_LABEL && m_label) {
       builder->node(m_label);
       return true;
     }
     return false;
   }
-}
+}  // namespace modules
 
 POLYBAR_NS_END

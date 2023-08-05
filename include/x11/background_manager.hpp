@@ -6,7 +6,6 @@
 #include "common.hpp"
 #include "events/signal_fwd.hpp"
 #include "events/signal_receiver.hpp"
-#include "events/types.hpp"
 #include "x11/extensions/fwd.hpp"
 #include "x11/types.hpp"
 
@@ -17,7 +16,7 @@ class logger;
 namespace cairo {
   class surface;
   class xcb_surface;
-}
+}  // namespace cairo
 
 class bg_slice {
  public:
@@ -58,15 +57,14 @@ class bg_slice {
 };
 
 /**
- * \brief Class to keep track of the desktop background used to support pseudo-transparency
+ * @brief Class to keep track of the desktop background used to support pseudo-transparency
  *
  * For pseudo-transparency that bar needs access to the desktop background.
  * We only need to store the slice of the background image which is covered by the bar window,
  * so this class takes a rectangle that limits what part of the background is stored.
  */
 class background_manager : public signal_receiver<SIGN_PRIORITY_SCREEN, signals::ui::update_geometry>,
-                           public xpp::event::sink<evt::property_notify>
-{
+                           public xpp::event::sink<evt::property_notify> {
  public:
   using make_type = background_manager&;
   static make_type make();
@@ -91,13 +89,14 @@ class background_manager : public signal_receiver<SIGN_PRIORITY_SCREEN, signals:
    * caches the background. If you don't need the background anymore, destroy the shared_ptr to free up
    * resources.
    *
-   * \param rect Slice of the background to observe (coordinates relative to window).
-   * \param window Coordinates are interpreted relative to this window
+   * @param rect Slice of the background to observe (coordinates relative to window).
+   * @param window Coordinates are interpreted relative to this window
    */
   std::shared_ptr<bg_slice> observe(xcb_rectangle_t rect, xcb_window_t window);
 
-  void handle(const evt::property_notify& evt);
-  bool on(const signals::ui::update_geometry&);
+  void handle(const evt::property_notify& evt) override;
+  bool on(const signals::ui::update_geometry&) override;
+
  private:
   void activate();
   void deactivate();
@@ -119,7 +118,6 @@ class background_manager : public signal_receiver<SIGN_PRIORITY_SCREEN, signals:
   void allocate_resources();
   void free_resources();
   void fetch_root_pixmap();
-
 };
 
 POLYBAR_NS_END

@@ -10,7 +10,8 @@ namespace modules {
    public:
     using module<Impl>::module;
 
-    void start() {
+    void start() override {
+      this->module<Impl>::start();
       this->m_mainthread = thread(&event_module::runner, this);
     }
 
@@ -40,6 +41,6 @@ namespace modules {
       }
     }
   };
-}
+}  // namespace modules
 
 POLYBAR_NS_END

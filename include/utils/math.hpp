@@ -1,28 +1,13 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 #include "common.hpp"
 
 POLYBAR_NS
 
 namespace math_util {
-  /**
-   * Get the min value
-   */
-  template <typename ValueType>
-  ValueType min(ValueType one, ValueType two) {
-    return one < two ? one : two;
-  }
-
-  /**
-   * Get the max value
-   */
-  template <typename ValueType>
-  ValueType max(ValueType one, ValueType two) {
-    return one > two ? one : two;
-  }
-
   /**
    * Limit value T by min and max bounds
    */
@@ -37,14 +22,16 @@ namespace math_util {
    * Calculate the percentage for a value
    * between min_value and max_value
    */
-  template<typename ValueType, typename ReturnType = int>
-  ReturnType unbounded_percentage(ValueType value, ValueType min_value, ValueType max_value){
+  template <typename ValueType, typename ReturnType = int>
+  ReturnType unbounded_percentage(ValueType value, ValueType min_value, ValueType max_value) {
     auto upper = (max_value - min_value);
     auto lower = static_cast<float>(value - min_value);
-    ValueType percentage = (lower / upper) * 100.0f;
-    if (std::is_integral<ReturnType>())
-      percentage += 0.5f;
-    return percentage;
+    float percentage = (lower / upper) * 100.0f;
+    if (std::is_integral<ReturnType>()) {
+      return static_cast<ReturnType>(std::round(percentage));
+    } else {
+      return percentage;
+    }
   }
 
   /**
@@ -113,6 +100,6 @@ namespace math_util {
   inline int ceil(double value, int step = 1) {
     return static_cast<int>((value * 10 + step * 10 - 1) / (step * 10)) * step;
   }
-}
+}  // namespace math_util
 
 POLYBAR_NS_END

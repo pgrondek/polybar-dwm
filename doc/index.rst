@@ -13,12 +13,14 @@ Welcome to the official polybar documentation.
    :caption: Content:
 
    user/actions
+   user/ipc
 
 .. toctree::
    :maxdepth: 1
    :caption: Manual Pages:
 
    man/polybar.1
+   man/polybar-msg.1
    man/polybar.5
 
 .. toctree::
@@ -39,5 +41,5 @@ Getting Help
 * `Polybar Wiki <https://github.com/polybar/polybar/wiki>`_
 * `Gitter <https://gitter.im/polybar/polybar>`_
 * `/r/polybar <https://reddit.com/r/polybar>`_ on reddit
-* ``#polybar`` on ``chat.freenode.net``
+* ``#polybar`` on `irc.libera.chat:6697 <https://libera.chat/>`_
 

@@ -1,15 +1,15 @@
 #pragma once
 
-#include <chrono>
-#include <cstdlib>
-
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 
+#include <chrono>
+#include <cstdlib>
+
 #include "common.hpp"
-#include "settings.hpp"
-#include "errors.hpp"
 #include "components/logger.hpp"
+#include "errors.hpp"
+#include "settings.hpp"
 #include "utils/math.hpp"
 
 #if WITH_LIBNL
@@ -37,7 +37,11 @@ class file_descriptor;
 namespace net {
   DEFINE_ERROR(network_error);
 
+  bool is_interface_valid(const string& ifname);
+  std::pair<string, bool> get_canonical_interface(const string& ifname);
   bool is_wireless_interface(const string& ifname);
+  std::string find_wireless_interface();
+  std::string find_wired_interface();
 
   // types {{{
 
@@ -58,12 +62,13 @@ namespace net {
   struct link_activity {
     bytes_t transmitted{0};
     bytes_t received{0};
-    std::chrono::system_clock::time_point time;
+    std::chrono::steady_clock::time_point time;
   };
 
   struct link_status {
     string ip;
     string ip6;
+    string mac;
     link_activity previous{};
     link_activity current{};
   };
@@ -82,8 +87,10 @@ namespace net {
 
     string ip() const;
     string ip6() const;
+    string mac() const;
     string downspeed(int minwidth = 3, const string& unit = "B/s") const;
     string upspeed(int minwidth = 3, const string& unit = "B/s") const;
+    string netspeed(int minwidth = 3, const string& unit = "B/s") const;
     void set_unknown_up(bool unknown = true);
 
    protected:

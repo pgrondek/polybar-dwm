@@ -1,6 +1,7 @@
 #include "adapters/net.hpp"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <linux/ethtool.h>
 #include <linux/if_link.h>
 #include <linux/sockios.h>
@@ -9,7 +10,9 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 
+#include <cassert>
 #include <iomanip>
 
 #include "common.hpp"
@@ -21,14 +24,111 @@
 POLYBAR_NS
 
 namespace net {
+  enum class NetType {
+    WIRELESS,
+    ETHERNET,
+    OTHER,
+  };
+
+  static const string NO_IP = string("N/A");
+  static const string NO_MAC = string("N/A");
+  static const string NET_PATH = "/sys/class/net/";
+  static const string VIRTUAL_PATH = "/sys/devices/virtual/";
+
+  static bool is_virtual(const std::string& ifname) {
+    char* target = realpath((NET_PATH + ifname).c_str(), nullptr);
+
+    if (!target) {
+      throw system_error("realpath");
+    }
+
+    const std::string real_path{target};
+    free(target);
+    return real_path.rfind(VIRTUAL_PATH, 0) == 0;
+  }
+
+  NetType iface_type(const std::string& ifname) {
+    if (file_util::exists(NET_PATH + ifname + "/wireless")) {
+      return NetType::WIRELESS;
+    }
+
+    if (is_virtual(ifname)) {
+      return NetType::OTHER;
+    }
+
+    return NetType::ETHERNET;
+  }
+
+  bool is_interface_valid(const string& ifname) {
+    return if_nametoindex(ifname.c_str()) != 0;
+  }
+
+  /**
+   * Returns the canonical name of the given interface and whether that differs
+   * from the given name.
+   *
+   * The canonical name is the name that has an entry in `/sys/class/net`.
+   *
+   * This resolves any altnames that were defined (see man ip-link).
+   */
+  std::pair<string, bool> get_canonical_interface(const string& ifname) {
+    int idx = if_nametoindex(ifname.c_str());
+
+    if (idx == 0) {
+      throw system_error("if_nameindex(" + ifname + ")");
+    }
+
+    char canonical[IF_NAMESIZE];
+    if (!if_indextoname(idx, canonical)) {
+      throw system_error("if_indextoname(" + to_string(idx) + ")");
+    }
+
+    string str{canonical};
+
+    return {str, str != ifname};
+  }
+
   /**
    * Test if interface with given name is a wireless device
    */
   bool is_wireless_interface(const string& ifname) {
-    return file_util::exists("/sys/class/net/" + ifname + "/wireless");
+    return iface_type(ifname) == NetType::WIRELESS;
   }
 
-  static const string NO_IP = string("N/A");
+  std::string find_interface(NetType type) {
+    struct ifaddrs* ifaddrs;
+    getifaddrs(&ifaddrs);
+
+    struct ifaddrs* candidate_if = nullptr;
+
+    for (struct ifaddrs* i = ifaddrs; i != nullptr; i = i->ifa_next) {
+      const std::string name{i->ifa_name};
+      const NetType iftype = iface_type(name);
+      if (iftype != type) {
+        continue;
+      }
+      if (candidate_if == nullptr) {
+        candidate_if = i;
+      } else if (((candidate_if->ifa_flags & IFF_RUNNING) == 0) && ((i->ifa_flags & IFF_RUNNING) > 0)) {
+        candidate_if = i;
+      }
+    }
+    if (candidate_if) {
+      const std::string name{candidate_if->ifa_name};
+      freeifaddrs(ifaddrs);
+      return name;
+    }
+    freeifaddrs(ifaddrs);
+    return "";
+  }
+
+  std::string find_wireless_interface() {
+    return find_interface(NetType::WIRELESS);
+  }
+
+  std::string find_wired_interface() {
+    return find_interface(NetType::ETHERNET);
+  }
 
   // class : network {{{
 
@@ -36,9 +136,7 @@ namespace net {
    * Construct network interface
    */
   network::network(string interface) : m_log(logger::make()), m_interface(move(interface)) {
-    if (if_nametoindex(m_interface.c_str()) == 0) {
-      throw network_error("Invalid network interface \"" + m_interface + "\"");
-    }
+    assert(is_interface_valid(m_interface));
 
     m_socketfd = file_util::make_file_descriptor(socket(AF_INET, SOCK_DGRAM, 0));
     if (!*m_socketfd) {
@@ -55,13 +153,18 @@ namespace net {
     m_status.previous = m_status.current;
     m_status.current.transmitted = 0;
     m_status.current.received = 0;
-    m_status.current.time = std::chrono::system_clock::now();
+    m_status.current.time = std::chrono::steady_clock::now();
     m_status.ip = NO_IP;
     m_status.ip6 = NO_IP;
 
     struct ifaddrs* ifaddr;
     if (getifaddrs(&ifaddr) == -1 || ifaddr == nullptr) {
       return false;
+    }
+
+    m_status.mac = string_util::trim(file_util::contents(NET_PATH + m_interface + "/address"), isspace);
+    if (m_status.mac == "") {
+      m_status.mac = NO_MAC;
     }
 
     for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
@@ -142,6 +245,12 @@ namespace net {
   string network::ip() const {
     return m_status.ip;
   }
+  /**
+   * Get interface mac address
+   */
+  string network::mac() const {
+    return m_status.mac;
+  }
 
   /**
    * Get interface ipv6 address
@@ -163,6 +272,15 @@ namespace net {
    */
   string network::upspeed(int minwidth, const string& unit) const {
     float bytes_diff = m_status.current.transmitted - m_status.previous.transmitted;
+    return format_speedrate(bytes_diff, minwidth, unit);
+  }
+  
+  /**
+   * Get total net speed rate
+   */
+  string network::netspeed(int minwidth, const string& unit) const {
+    float bytes_diff = m_status.current.received - m_status.previous.received
+                     + m_status.current.transmitted - m_status.previous.transmitted;
     return format_speedrate(bytes_diff, minwidth, unit);
   }
 
@@ -215,7 +333,7 @@ namespace net {
    * Test if the network interface is in a valid state
    */
   bool network::test_interface() const {
-    auto operstate = file_util::contents("/sys/class/net/" + m_interface + "/operstate");
+    auto operstate = file_util::contents(NET_PATH + m_interface + "/operstate");
     bool up = operstate.compare(0, 2, "up") == 0;
     return m_unknown_up ? (up || operstate.compare(0, 7, "unknown") == 0) : up;
   }
@@ -229,7 +347,7 @@ namespace net {
     float time_diff = duration.count();
     float speedrate = bytes_diff / time_diff;
 
-    vector<pair<string,int>> units{make_pair("G", 2), make_pair("M", 1)};
+    vector<pair<string, int>> units{make_pair("G", 2), make_pair("M", 1)};
     string suffix{"K"};
     int precision = 0;
 
@@ -239,8 +357,8 @@ namespace net {
       units.pop_back();
     }
 
-    return sstream() << std::setw(minwidth) << std::setfill(' ') << std::setprecision(precision) << std::fixed << speedrate
-                     << " " << suffix << unit;
+    return sstream() << std::setw(minwidth) << std::setfill(' ') << std::setprecision(precision) << std::fixed
+                     << speedrate << " " << suffix << unit;
   }
 
   // }}}

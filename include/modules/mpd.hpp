@@ -37,8 +37,17 @@ namespace modules {
     static constexpr const char* EVENT_CONSUME = "consume";
     static constexpr const char* EVENT_SEEK = "seek";
 
-   protected:
-    bool input(const string& action, const string& data);
+   private:
+    void action_play();
+    void action_pause();
+    void action_stop();
+    void action_prev();
+    void action_next();
+    void action_repeat();
+    void action_single();
+    void action_random();
+    void action_consume();
+    void action_seek(const string& data);
 
    private:
     static constexpr const char* FORMAT_ONLINE{"format-online"};
@@ -87,7 +96,7 @@ namespace modules {
     string m_pass;
     unsigned int m_port{6600U};
 
-    chrono::system_clock::time_point m_lastsync{};
+    chrono::steady_clock::time_point m_lastsync{};
     float m_synctime{1.0f};
 
     int m_quick_attempts{0};

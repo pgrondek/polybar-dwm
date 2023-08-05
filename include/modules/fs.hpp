@@ -25,7 +25,7 @@ namespace modules {
     int percentage_free{0};
     int percentage_used{0};
 
-    explicit fs_mount(const string& mountpoint, bool mounted = false) : mountpoint(mountpoint), mounted(mounted) {}
+    explicit fs_mount(string mountpoint, bool mounted = false) : mountpoint(move(mountpoint)), mounted(mounted) {}
   };
 
   using fs_mount_t = unique_ptr<fs_mount>;
@@ -66,12 +66,12 @@ namespace modules {
     vector<fs_mount_t> m_mounts;
     bool m_fixed{false};
     bool m_remove_unmounted{false};
-    int m_spacing{2};
+    spacing_val m_spacing{spacing_type::SPACE, 2U};
     int m_perc_used_warn{90};
 
     // used while formatting output
     size_t m_index{0_z};
   };
-}  // namespace modules
+} // namespace modules
 
 POLYBAR_NS_END

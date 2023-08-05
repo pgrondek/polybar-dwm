@@ -26,20 +26,20 @@ namespace modules {
   battery_module::battery_module(const bar_settings& bar, string name_)
       : inotify_module<battery_module>(bar, move(name_)) {
     // Load configuration values
-    m_fullat = math_util::min(m_conf.get(name(), "full-at", m_fullat), 100);
-    m_lowat = math_util::max(m_conf.get(name(), "low-at", m_lowat), 0);
+    m_fullat = std::min(m_conf.get(name(), "full-at", m_fullat), 100);
+    m_lowat = std::max(m_conf.get(name(), "low-at", m_lowat), 0);
     m_interval = m_conf.get<decltype(m_interval)>(name(), "poll-interval", 5s);
-    m_lastpoll = chrono::system_clock::now();
+    m_lastpoll = chrono::steady_clock::now();
 
     auto path_adapter = string_util::replace(PATH_ADAPTER, "%adapter%", m_conf.get(name(), "adapter", "ADP1"s)) + "/";
     auto path_battery = string_util::replace(PATH_BATTERY, "%battery%", m_conf.get(name(), "battery", "BAT0"s)) + "/";
 
     // Make state reader
-    if (file_util::exists((m_fstate = path_adapter + "online"))) {
+    if (file_util::exists((m_fstate = path_battery + "status"))) {
+          m_state_reader =
+              make_unique<state_reader>([=] { return file_util::contents(m_fstate).compare(0, 8, "Charging") == 0; });
+    } else if (file_util::exists((m_fstate = path_adapter + "online"))) {
       m_state_reader = make_unique<state_reader>([=] { return file_util::contents(m_fstate).compare(0, 1, "1") == 0; });
-    } else if (file_util::exists((m_fstate = path_battery + "status"))) {
-      m_state_reader =
-          make_unique<state_reader>([=] { return file_util::contents(m_fstate).compare(0, 8, "Charging") == 0; });
     } else {
       throw module_error("No suitable way to get current charge state");
     }
@@ -195,11 +195,11 @@ namespace modules {
    */
   void battery_module::idle() {
     if (m_interval.count() > 0) {
-      auto now = chrono::system_clock::now();
+      auto now = chrono::steady_clock::now();
       if (chrono::duration_cast<decltype(m_interval)>(now - m_lastpoll) > m_interval) {
         m_lastpoll = now;
         m_log.info("%s: Polling values (inotify fallback)", name());
-        read(*m_capacity_reader);
+        on_event(nullptr);
       }
     }
 
@@ -214,7 +214,7 @@ namespace modules {
     auto percentage = current_percentage();
 
     // Reset timer to avoid unnecessary polling
-    m_lastpoll = chrono::system_clock::now();
+    m_lastpoll = chrono::steady_clock::now();
 
     if (event != nullptr) {
       m_log.trace("%s: Inotify event reported for %s", name(), event->filename);
@@ -229,16 +229,11 @@ namespace modules {
     m_state = state;
     m_percentage = percentage;
 
-    const auto label = [this] {
-      switch (m_state) {
-        case battery_module::state::FULL: return m_label_full;
-        case battery_module::state::DISCHARGING: return m_label_discharging;
-        case battery_module::state::LOW: return m_label_low;
-        default: return m_label_charging;
+    const auto replace_tokens = [&](label_t& label) {
+      if (!label) {
+        return;
       }
-    }();
 
-    if (label) {
       label->reset_tokens();
       label->replace_token("%percentage%", to_string(clamp_percentage(m_percentage, m_state)));
       label->replace_token("%percentage_raw%", to_string(m_percentage));
@@ -247,7 +242,12 @@ namespace modules {
       if (m_state != battery_module::state::FULL && !m_timeformat.empty()) {
         label->replace_token("%time%", current_time());
       }
-    }
+    };
+
+    replace_tokens(m_label_full);
+    replace_tokens(m_label_discharging);
+    replace_tokens(m_label_low);
+    replace_tokens(m_label_charging);
 
     return true;
   }
@@ -261,7 +261,7 @@ namespace modules {
       case battery_module::state::LOW:
         if (m_formatter->has_format(FORMAT_LOW)) {
           return FORMAT_LOW;
-        }  
+        }
         return FORMAT_DISCHARGING;
       case battery_module::state::DISCHARGING: return FORMAT_DISCHARGING;
       default: return FORMAT_CHARGING;

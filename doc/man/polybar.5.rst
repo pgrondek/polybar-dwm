@@ -32,7 +32,12 @@ places in the following order:
 * If the ``-c`` or ``--config`` command line argument is specified, it will use
   the path given there.
 * ``$XDG_CONFIG_HOME/polybar/config``
+* ``$XDG_CONFIG_HOME/polybar/config.ini``
 * ``$HOME/.config/polybar/config``
+* ``$HOME/.config/polybar/config.ini``
+* ``$XDG_CONFIG_DIRS/polybar/config.ini``
+* ``/etc/xdg/polybar/config.ini`` (only if ``XDG_CONFIG_DIRS`` is not set)
+* ``/etc/polybar/config.ini``
 
 Syntax
 ------
@@ -126,7 +131,22 @@ in double-quotes:
 
   name = " value "
 
-Here ``name`` has a leading and trailing whitespace.
+Here the value of the ``name`` key has a leading and trailing whitespace.
+
+To treat characters with special meaning as literal characters, you need to
+prepend them with the backslash (``\``) escape character:
+
+::
+
+  name = "value\\value\\value"
+
+Value of this key ``name`` results in ``value\value\value``.
+
+.. note::
+
+  The only character with a special meaning right now is the backslash character
+  (``\``), which serves as the escape character.
+  More will be added in the future.
 
 Empty Lines & Comments
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -144,13 +164,21 @@ not affect polybar's behavior. Comment lines start with either the ``;`` or the
 
     name = value ; comment
 
+AUTHORS
+-------
+| Polybar was created by Michael Carlberg and is currently maintained by Patrick Ziegler.
+| Contributors can be listed on GitHub.
+
 SEE ALSO
 --------
 
 .. only:: man
 
-  :manpage:`polybar(1)`
+  :manpage:`polybar`\(1),
+  :manpage:`polybar-msg`\(1)
+
 
 .. only:: not man
 
-  :doc:`polybar.1`
+  :doc:`polybar.1`,
+  :doc:`polybar-msg.1`

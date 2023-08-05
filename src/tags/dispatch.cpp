@@ -7,39 +7,31 @@
 #include "settings.hpp"
 #include "tags/parser.hpp"
 #include "utils/color.hpp"
-#include "utils/factory.hpp"
 
 POLYBAR_NS
 
-using namespace signals::parser;
-
 namespace tags {
-  static rgba get_color(tags::color_value c, rgba fallback) {
-    if (c.type == tags::color_type::RESET) {
-      return fallback;
-    } else {
-      return c.val;
-    }
-  }
-
   /**
    * Create instance
    */
-  dispatch::make_type dispatch::make() {
-    return factory_util::unique<dispatch>(signal_emitter::make(), logger::make());
+  dispatch::make_type dispatch::make(action_context& action_ctxt) {
+    return std::make_unique<dispatch>(logger::make(), action_ctxt);
   }
 
   /**
    * Construct parser instance
    */
-  dispatch::dispatch(signal_emitter& emitter, const logger& logger) : m_sig(emitter), m_log(logger) {}
+  dispatch::dispatch(const logger& logger, action_context& action_ctxt) : m_log(logger), m_action_ctxt(action_ctxt) {}
 
   /**
    * Process input string
    */
-  void dispatch::parse(const bar_settings& bar, string data) {
+  void dispatch::parse(const bar_settings& bar, renderer_interface& renderer, const string&& data) {
     tags::parser p;
     p.set(std::move(data));
+
+    m_action_ctxt.reset();
+    m_ctxt = make_unique<context>(bar);
 
     while (p.has_next_element()) {
       tags::element el;
@@ -50,45 +42,51 @@ namespace tags {
         continue;
       }
 
+      alignment old_alignment = m_ctxt->get_alignment();
+      double old_x = old_alignment == alignment::NONE ? 0 : renderer.get_x(*m_ctxt);
+
       if (el.is_tag) {
         switch (el.tag_data.type) {
           case tags::tag_type::FORMAT:
             switch (el.tag_data.subtype.format) {
               case tags::syntaxtag::A:
-                handle_action(el.tag_data.action.btn, el.tag_data.action.closing, std::move(el.data));
+                handle_action(renderer, el.tag_data.action.btn, el.tag_data.action.closing, std::move(el.data));
                 break;
               case tags::syntaxtag::B:
-                m_sig.emit(change_background{get_color(el.tag_data.color, bar.background)});
+                m_ctxt->apply_bg(el.tag_data.color);
                 break;
               case tags::syntaxtag::F:
-                m_sig.emit(change_foreground{get_color(el.tag_data.color, bar.foreground)});
+                m_ctxt->apply_fg(el.tag_data.color);
                 break;
               case tags::syntaxtag::T:
-                m_sig.emit(change_font{el.tag_data.font});
+                m_ctxt->apply_font(el.tag_data.font);
                 break;
               case tags::syntaxtag::O:
-                m_sig.emit(offset_pixel{el.tag_data.offset});
+                handle_offset(renderer, el.tag_data.offset);
                 break;
               case tags::syntaxtag::R:
-                m_sig.emit(reverse_colors{});
+                m_ctxt->apply_reverse();
                 break;
               case tags::syntaxtag::o:
-                m_sig.emit(change_overline{get_color(el.tag_data.color, bar.overline.color)});
+                m_ctxt->apply_ol(el.tag_data.color);
                 break;
               case tags::syntaxtag::u:
-                m_sig.emit(change_underline{get_color(el.tag_data.color, bar.underline.color)});
+                m_ctxt->apply_ul(el.tag_data.color);
                 break;
               case tags::syntaxtag::P:
-                m_sig.emit(control{el.tag_data.ctrl});
+                handle_control(el.tag_data.ctrl);
                 break;
               case tags::syntaxtag::l:
-                m_sig.emit(change_alignment{alignment::LEFT});
+                m_ctxt->apply_alignment(alignment::LEFT);
+                renderer.change_alignment(*m_ctxt);
                 break;
               case tags::syntaxtag::r:
-                m_sig.emit(change_alignment{alignment::RIGHT});
+                m_ctxt->apply_alignment(alignment::RIGHT);
+                renderer.change_alignment(*m_ctxt);
                 break;
               case tags::syntaxtag::c:
-                m_sig.emit(change_alignment{alignment::CENTER});
+                m_ctxt->apply_alignment(alignment::CENTER);
+                renderer.change_alignment(*m_ctxt);
                 break;
               default:
                 throw runtime_error(
@@ -96,37 +94,40 @@ namespace tags {
             }
             break;
           case tags::tag_type::ATTR:
-            tags::attribute act = el.tag_data.attr;
-            switch (el.tag_data.subtype.activation) {
-              case tags::attr_activation::ON:
-                m_sig.emit(attribute_set{act});
-                break;
-              case tags::attr_activation::OFF:
-                m_sig.emit(attribute_unset{act});
-                break;
-              case tags::attr_activation::TOGGLE:
-                m_sig.emit(attribute_toggle{act});
-                break;
-              default:
-                throw runtime_error("Unrecognized attribute activation: " +
-                                    to_string(static_cast<int>(el.tag_data.subtype.activation)));
-            }
+            m_ctxt->apply_attr(el.tag_data.subtype.activation, el.tag_data.attr);
             break;
         }
       } else {
-        text(std::move(el.data));
+        handle_text(renderer, std::move(el.data));
+      }
+
+      if (old_alignment == m_ctxt->get_alignment()) {
+        double new_x = renderer.get_x(*m_ctxt);
+        if (new_x < old_x) {
+          m_action_ctxt.compensate_for_negative_move(old_alignment, old_x, new_x);
+        }
       }
     }
 
-    if (!m_actions.empty()) {
-      throw runtime_error(to_string(m_actions.size()) + " unclosed action block(s)");
+    /*
+     * After rendering, we need to tell the action context about the position
+     * of the alignment blocks so that it can do intersection tests.
+     */
+    for (auto a : {alignment::LEFT, alignment::CENTER, alignment::RIGHT}) {
+      m_action_ctxt.set_alignment_start(a, renderer.get_alignment_start(a));
+    }
+
+    auto num_unclosed = m_action_ctxt.num_unclosed();
+
+    if (num_unclosed != 0) {
+      throw runtime_error(to_string(num_unclosed) + " unclosed action block(s)");
     }
   }
 
   /**
    * Process text contents
    */
-  void dispatch::text(string&& data) {
+  void dispatch::handle_text(renderer_interface& renderer, string&& data) {
 #ifdef DEBUG_WHITESPACE
     string::size_type p;
     while ((p = data.find(' ')) != string::npos) {
@@ -134,38 +135,31 @@ namespace tags {
     }
 #endif
 
-    m_sig.emit(signals::parser::text{std::move(data)});
+    renderer.render_text(*m_ctxt, std::move(data));
   }
 
-  void dispatch::handle_action(mousebtn btn, bool closing, const string&& cmd) {
+  void dispatch::handle_action(renderer_interface& renderer, mousebtn btn, bool closing, const string&& cmd) {
     if (closing) {
-      if (btn == mousebtn::NONE) {
-        if (!m_actions.empty()) {
-          btn = m_actions.back();
-          m_actions.pop_back();
-        } else {
-          m_log.err("parser: Closing action tag without matching tag");
-        }
-      } else {
-        auto it = std::find(m_actions.crbegin(), m_actions.crend(), btn);
-
-        if (it == m_actions.rend()) {
-          m_log.err("parser: Closing action tag for button %d without matching opening tag", static_cast<int>(btn));
-        } else {
-          /*
-           * We can't erase with a reverse iterator, we have to get
-           * the forward iterator first
-           * https://stackoverflow.com/a/1830240/5363071
-           */
-          m_actions.erase(std::next(it).base());
-        }
-      }
-      m_sig.emit(action_end{btn});
+      m_action_ctxt.action_close(btn, m_ctxt->get_alignment(), renderer.get_x(*m_ctxt));
     } else {
-      m_actions.push_back(btn);
-      m_sig.emit(action_begin{action{btn, std::move(cmd)}});
+      m_action_ctxt.action_open(btn, std::move(cmd), m_ctxt->get_alignment(), renderer.get_x(*m_ctxt));
     }
   }
-}  // namespace tags
+
+  void dispatch::handle_offset(renderer_interface& renderer, extent_val offset) {
+    renderer.render_offset(*m_ctxt, offset);
+  }
+
+  void dispatch::handle_control(controltag ctrl) {
+    switch (ctrl) {
+      case controltag::R:
+        m_ctxt->apply_reset();
+        break;
+      default:
+        throw runtime_error("Unrecognized polybar control tag: " + to_string(static_cast<int>(ctrl)));
+    }
+  }
+
+} // namespace tags
 
 POLYBAR_NS_END

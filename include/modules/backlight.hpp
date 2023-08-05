@@ -32,7 +32,10 @@ namespace modules {
     static constexpr const char* EVENT_DEC = "dec";
 
    protected:
-    bool input(const string& action, const string& data);
+    void action_inc();
+    void action_dec();
+
+    void change_value(int value_mod);
 
    private:
     static constexpr auto TAG_LABEL = "<label>";
@@ -45,6 +48,7 @@ namespace modules {
     string m_path_backlight;
     float m_max_brightness;
     bool m_scroll{false};
+    bool m_use_actual_brightness{true};
 
     brightness_handle m_val;
     brightness_handle m_max;

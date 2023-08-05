@@ -5,7 +5,6 @@
 #include "drawtypes/iconset.hpp"
 #include "drawtypes/label.hpp"
 #include "modules/meta/base.inl"
-#include "utils/factory.hpp"
 #include "utils/file.hpp"
 #include "utils/string.hpp"
 
@@ -41,6 +40,10 @@ namespace modules {
   template class module<bspwm_module>;
 
   bspwm_module::bspwm_module(const bar_settings& bar, string name_) : event_module<bspwm_module>(bar, move(name_)) {
+    m_router->register_action_with_data(EVENT_FOCUS, [this](const std::string& data) { action_focus(data); });
+    m_router->register_action(EVENT_NEXT, [this]() { action_next(); });
+    m_router->register_action(EVENT_PREV, [this]() { action_prev(); });
+
     auto socket_path = bspwm_util::get_socket_path();
 
     if (!file_util::exists(socket_path)) {
@@ -54,6 +57,7 @@ namespace modules {
     m_pinworkspaces = m_conf.get(name(), "pin-workspaces", m_pinworkspaces);
     m_click = m_conf.get(name(), "enable-click", m_click);
     m_scroll = m_conf.get(name(), "enable-scroll", m_scroll);
+    m_occscroll = m_conf.get(name(), "occupied-scroll", m_occscroll);
     m_revscroll = m_conf.get(name(), "reverse-scroll", m_revscroll);
     m_inlinemode = m_conf.get(name(), "inline-mode", m_inlinemode);
     m_fuzzy_match = m_conf.get(name(), "fuzzy-match", m_fuzzy_match);
@@ -127,14 +131,19 @@ namespace modules {
 
     m_labelseparator = load_optional_label(m_conf, name(), "label-separator", "");
 
-    m_icons = factory_util::shared<iconset>();
-    m_icons->add(DEFAULT_ICON, factory_util::shared<label>(m_conf.get(name(), DEFAULT_ICON, ""s)));
+    m_icons = std::make_shared<iconset>();
+    m_icons->add(DEFAULT_ICON, std::make_shared<label>(m_conf.get(name(), DEFAULT_ICON, ""s)));
 
+    int i = 0;
     for (const auto& workspace : m_conf.get_list<string>(name(), "ws-icon", {})) {
       auto vec = string_util::tokenize(workspace, ';');
       if (vec.size() == 2) {
-        m_icons->add(vec[0], factory_util::shared<label>(vec[1]));
+        m_icons->add(vec[0], std::make_shared<label>(vec[1]));
+      } else {
+        m_log.err("%s: Ignoring ws-icon-%d because it has %s semicolons", name(), i, vec.size() > 2? "too many" : "too few");
       }
+
+      i++;
     }
   }
 
@@ -229,7 +238,7 @@ namespace modules {
       unsigned int workspace_mask{0U};
 
       if (tag[0] == 'm' || tag[0] == 'M') {
-        m_monitors.emplace_back(factory_util::unique<bspwm_monitor>());
+        m_monitors.emplace_back(std::make_unique<bspwm_monitor>());
         m_monitors.back()->name = value;
 
         if (m_monitorlabel) {
@@ -281,6 +290,8 @@ namespace modules {
         case 'T':
           switch (value[0]) {
             case 0:
+              break;
+            case '@':
               break;
             case 'T':
               break;
@@ -381,7 +392,7 @@ namespace modules {
     string output;
     for (m_index = 0U; m_index < m_monitors.size(); m_index++) {
       if (m_index > 0) {
-        m_builder->space(m_formatter->get(DEFAULT_FORMAT)->spacing);
+        m_builder->spacing(m_formatter->get(DEFAULT_FORMAT)->spacing);
       }
       output += this->event_module::get_output();
     }
@@ -445,48 +456,36 @@ namespace modules {
     return false;
   }
 
-  bool bspwm_module::input(const string& action, const string& data) {
-    auto send_command = [this](string payload_cmd, string log_info) {
-      try {
-        auto ipc = bspwm_util::make_connection();
-        auto payload = bspwm_util::make_payload(payload_cmd);
-        m_log.info("%s: %s", name(), log_info);
-        ipc->send(payload->data, payload->len, 0);
-        ipc->disconnect();
-      } catch (const system_error& err) {
-        m_log.err("%s: %s", name(), err.what());
-      }
-    };
+  void bspwm_module::action_focus(const string& data) {
+    size_t separator{string_util::find_nth(data, 0, "+", 1)};
+    size_t monitor_n{std::strtoul(data.substr(0, separator).c_str(), nullptr, 10)};
+    string workspace_n{data.substr(separator + 1)};
 
-    if (action == EVENT_FOCUS) {
-      size_t separator{string_util::find_nth(data, 0, "+", 1)};
-      size_t monitor_n{std::strtoul(data.substr(0, separator).c_str(), nullptr, 10)};
-      string workspace_n{data.substr(separator + 1)};
-
-      if (monitor_n < m_monitors.size()) {
-        send_command("desktop -f " + m_monitors[monitor_n]->name + ":^" + workspace_n,
-            "Sending desktop focus command to ipc handler");
-      } else {
-        m_log.err("%s: Invalid monitor index in command: %s", name(), data);
-      }
-
-      return true;
-    }
-
-    string scrolldir;
-
-    if (action == EVENT_NEXT) {
-      scrolldir = "next";
-    } else if (action == EVENT_PREV) {
-      scrolldir = "prev";
+    if (monitor_n < m_monitors.size()) {
+      send_command("desktop -f " + m_monitors[monitor_n]->name + ":^" + workspace_n,
+          "Sending desktop focus command to ipc handler");
     } else {
-      return false;
+      m_log.err("%s: Invalid monitor index in command: %s", name(), data);
     }
+  }
+  void bspwm_module::action_next() {
+    focus_direction(true);
+  }
 
+  void bspwm_module::action_prev() {
+    focus_direction(false);
+  }
+
+  void bspwm_module::focus_direction(bool next) {
+    string scrolldir = next ? "next" : "prev";
     string modifier;
 
+    if (m_occscroll) {
+      modifier += ".occupied";
+    }
+
     if (m_pinworkspaces) {
-      modifier = ".local";
+      modifier += ".local";
       for (const auto& mon : m_monitors) {
         if (m_bar.monitor->match(mon->name, false) && !mon->focused) {
           send_command("monitor -f " + mon->name, "Sending monitor focus command to ipc handler");
@@ -496,8 +495,14 @@ namespace modules {
     }
 
     send_command("desktop -f " + scrolldir + modifier, "Sending desktop " + scrolldir + " command to ipc handler");
+  }
 
-    return true;
+  void bspwm_module::send_command(const string& payload_cmd, const string& log_info) {
+    auto ipc = bspwm_util::make_connection();
+    auto payload = bspwm_util::make_payload(payload_cmd);
+    m_log.info("%s: %s", name(), log_info);
+    ipc->send(payload->data, payload->len, 0);
+    ipc->disconnect();
   }
 }  // namespace modules
 

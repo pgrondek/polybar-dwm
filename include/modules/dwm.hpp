@@ -70,11 +70,12 @@ namespace modules {
     static constexpr const char* EVENT_LAYOUT_SET{"setlayoutsafe"};
 
    protected:
-    bool input(const string& action, const string& data) override;
+    bool generic_action(const string& action, const string& data);
 
    private:
     static constexpr const char* DEFAULT_FORMAT_TAGS{"<label-tags> <label-layout> <label-floating> <label-title>"};
     static constexpr const char* DEFAULT_STATE_LABEL{"%name%"};
+
 
     /**
      * The tags label is replaced with the tags. Each tag is displayed using one
