@@ -21,6 +21,12 @@
 #include "x11/winspec.hpp"
 #include "x11/xembed.hpp"
 
+/*
+ * Tray implementation according to the System Tray Protocol.
+ *
+ * Ref: https://specifications.freedesktop.org/systemtray-spec/systemtray-spec-latest.html
+ */
+
 // ====================================================================================================
 //
 // TODO: 32-bit visual
@@ -427,13 +433,21 @@ void tray_manager::refresh_window() {
     m_connection.poly_fill_rectangle(m_pixmap, m_gc, 1, &rect);
   }
 
-  if (m_surface)
+  if (m_surface) {
     m_surface->flush();
+  }
 
   m_connection.clear_area(0, m_tray, 0, 0, width, height);
 
   for (auto&& client : m_clients) {
-    client->clear_window();
+    try {
+      if (client->mapped()) {
+        client->clear_window();
+      }
+    } catch (const std::exception& e) {
+      m_log.err("Failed to clear tray client %s '%s' (%s)", m_connection.id(client->window()),
+          ewmh_util::get_wm_name(client->window()), e.what());
+    }
   }
 
   m_connection.flush();
@@ -477,8 +491,8 @@ void tray_manager::create_window() {
     << cw_class(XCB_WINDOW_CLASS_INPUT_OUTPUT)
     << cw_params_backing_store(XCB_BACKING_STORE_WHEN_MAPPED)
     << cw_params_event_mask(XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
-                           |XCB_EVENT_MASK_STRUCTURE_NOTIFY
-                           |XCB_EVENT_MASK_EXPOSURE)
+        |XCB_EVENT_MASK_STRUCTURE_NOTIFY
+        |XCB_EVENT_MASK_EXPOSURE)
     << cw_params_override_redirect(true);
   // clang-format on
 
@@ -726,26 +740,29 @@ void tray_manager::track_selection_owner(xcb_window_t owner) {
  * Process client docking request
  */
 void tray_manager::process_docking_request(xcb_window_t win) {
-  m_log.info("Processing docking request from %s", m_connection.id(win));
+  m_log.info("Processing docking request from '%s' (%s)", ewmh_util::get_wm_name(win), m_connection.id(win));
 
   m_clients.emplace_back(factory_util::shared<tray_client>(m_connection, win, m_opts.width, m_opts.height));
   auto& client = m_clients.back();
 
   try {
-    m_log.trace("tray: Get client _XEMBED_INFO");
-    xembed::query(m_connection, win, client->xembed());
-  } catch (const application_error& err) {
-    m_log.err(err.what());
+    client->query_xembed();
   } catch (const xpp::x::error::window& err) {
     m_log.err("Failed to query _XEMBED_INFO, removing client... (%s)", err.what());
     remove_client(win, true);
     return;
   }
 
+  m_log.trace("tray: xembed = %s", client->is_xembed_supported() ? "true" : "false");
+  if (client->is_xembed_supported()) {
+    m_log.trace("tray: version = 0x%x, flags = 0x%x, XEMBED_MAPPED = %s", client->get_xembed().get_version(),
+        client->get_xembed().get_flags(), client->get_xembed().is_mapped() ? "true" : "false");
+  }
+
+
   try {
-    const unsigned int mask{XCB_CW_BACK_PIXMAP | XCB_CW_EVENT_MASK};
-    const unsigned int values[]{
-        XCB_BACK_PIXMAP_PARENT_RELATIVE, XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_STRUCTURE_NOTIFY};
+    const unsigned int mask = XCB_CW_EVENT_MASK;
+    const unsigned int values[]{XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_STRUCTURE_NOTIFY};
 
     m_log.trace("tray: Update client window");
     m_connection.change_window_attributes_checked(client->window(), mask, values);
@@ -760,15 +777,18 @@ void tray_manager::process_docking_request(xcb_window_t win) {
     m_connection.reparent_window_checked(
         client->window(), m_tray, calculate_client_x(client->window()), calculate_client_y());
 
-    m_log.trace("tray: Send embbeded notification to client");
-    xembed::notify_embedded(m_connection, client->window(), m_tray, client->xembed()->version);
+    if (client->is_xembed_supported()) {
+      m_log.trace("tray: Send embbeded notification to client");
+      xembed::notify_embedded(m_connection, client->window(), m_tray, client->get_xembed().get_version());
+    }
 
-    if (client->xembed()->flags & XEMBED_MAPPED) {
+    if (!client->is_xembed_supported() || client->get_xembed().is_mapped()) {
       m_log.trace("tray: Map client");
       m_connection.map_window_checked(client->window());
     }
-  } catch (const xpp::x::error::window& err) {
-    m_log.err("Failed to setup tray client, removing... (%s)", err.what());
+
+  } catch (const std::exception& err) {
+    m_log.err("Failed to setup tray client removing... (%s)", err.what());
     remove_client(win, false);
   }
 }
@@ -1013,7 +1033,6 @@ void tray_manager::handle(const evt::property_notify& evt) {
 
   m_log.trace("tray: _XEMBED_INFO: %s", m_connection.id(evt->window));
 
-  auto xd = client->xembed();
   auto win = client->window();
 
   if (evt->state == XCB_PROPERTY_NEW_VALUE) {
@@ -1021,20 +1040,17 @@ void tray_manager::handle(const evt::property_notify& evt) {
   }
 
   try {
-    m_log.trace("tray: Get client _XEMBED_INFO");
-    xembed::query(m_connection, win, xd);
-  } catch (const application_error& err) {
-    m_log.err(err.what());
-    return;
+    client->query_xembed();
   } catch (const xpp::x::error::window& err) {
     m_log.err("Failed to query _XEMBED_INFO, removing client... (%s)", err.what());
     remove_client(win, true);
     return;
   }
 
-  m_log.trace("tray: _XEMBED_INFO[0]=%u _XEMBED_INFO[1]=%u", xd->version, xd->flags);
+  m_log.trace("tray: version = 0x%x, flags = 0x%x, XEMBED_MAPPED = %s", client->get_xembed().get_version(),
+      client->get_xembed().get_flags(), client->get_xembed().is_mapped() ? "true" : "false");
 
-  if ((client->xembed()->flags & XEMBED_MAPPED) & XEMBED_MAPPED) {
+  if (client->get_xembed().is_mapped()) {
     reconfigure();
   }
 }
