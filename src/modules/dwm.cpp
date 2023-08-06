@@ -454,6 +454,9 @@ namespace modules {
         m_log.err("%s: Disconnected from socket: %s", name(), err.what());
         sleep(chrono::duration<double>(1));
         reconnect_dwm();
+      } catch (const dwmipc::ResultFailureError& err) {
+        new_title = "Unknown";
+        m_log.warn("update_title_label: %s %s", name(), err.what());
       } catch (const dwmipc::IPCError& err) {
         throw module_error(err.what());
       }
@@ -469,6 +472,9 @@ namespace modules {
         m_log.err("%s: Disconnected from socket: %s", name(), err.what());
         sleep(chrono::duration<double>(1));
         reconnect_dwm();
+      } catch (const dwmipc::ResultFailureError& err) {
+        m_is_floating = false;
+        m_log.warn("update_floating_label: %s %s", name(), err.what());
       } catch (const dwmipc::IPCError& err) {
         throw module_error(err.what());
       }
