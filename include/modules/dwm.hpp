@@ -10,7 +10,7 @@ POLYBAR_NS
 namespace modules {
   class dwm_module : public event_module<dwm_module> {
    public:
-    explicit dwm_module(const bar_settings&, string);
+    explicit dwm_module(const bar_settings&, string, const config&);
 
     using tag_mask_t = unsigned int;
     using window_t = unsigned int;

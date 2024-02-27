@@ -15,7 +15,7 @@ POLYBAR_NS
 namespace modules {
   template class module<dwm_module>;
 
-  dwm_module::dwm_module(const bar_settings& bar, string name_) : event_module<dwm_module>(bar, move(name_)) {
+  dwm_module::dwm_module(const bar_settings& bar, string name_, const config& conf) : event_module<dwm_module>(bar, move(name_), conf) {
     m_router->register_action_with_data(EVENT_LAYOUT_SET, [this](const std::string& data) { generic_action(EVENT_LAYOUT_SET,data); });
     m_router->register_action_with_data(EVENT_TAG_VIEW, [this](const std::string& data) { generic_action(EVENT_TAG_VIEW,data);; });
     m_router->register_action_with_data(EVENT_TAG_TOGGLE_VIEW, [this](const std::string& data) { generic_action(EVENT_TAG_TOGGLE_VIEW,data); });
