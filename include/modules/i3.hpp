@@ -4,6 +4,7 @@
 
 #include "components/config.hpp"
 #include "modules/meta/event_module.hpp"
+#include "modules/meta/types.hpp"
 #include "utils/i3.hpp"
 #include "utils/io.hpp"
 
@@ -44,14 +45,14 @@ namespace modules {
     };
 
    public:
-    explicit i3_module(const bar_settings&, string);
+    explicit i3_module(const bar_settings&, string, const config&);
 
     void stop() override;
     bool has_event();
     bool update();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/i3";
+    static constexpr auto TYPE = I3_TYPE;
 
     static constexpr auto EVENT_FOCUS = "focus";
     static constexpr auto EVENT_NEXT = "next";

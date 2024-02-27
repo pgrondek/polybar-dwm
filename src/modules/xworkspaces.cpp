@@ -14,12 +14,6 @@
 
 POLYBAR_NS
 
-namespace {
-  inline bool operator==(const position& a, const position& b) {
-    return a.x + a.y == b.x + b.y;
-  }
-} // namespace
-
 /**
  * Defines a lexicographical order on position
  */
@@ -33,8 +27,10 @@ namespace modules {
   /**
    * Construct module
    */
-  xworkspaces_module::xworkspaces_module(const bar_settings& bar, string name_)
-      : static_module<xworkspaces_module>(bar, move(name_)), m_connection(connection::make()) {
+  xworkspaces_module::xworkspaces_module(const bar_settings& bar, string name_, const config& config)
+      : static_module<xworkspaces_module>(bar, move(name_), config)
+      , m_connection(connection::make())
+      , m_ewmh(ewmh_util::initialize()) {
     m_router->register_action_with_data(EVENT_FOCUS, [this](const std::string& data) { action_focus(data); });
     m_router->register_action(EVENT_NEXT, [this]() { action_next(); });
     m_router->register_action(EVENT_PREV, [this]() { action_prev(); });
@@ -44,17 +40,16 @@ namespace modules {
     m_click = m_conf.get(name(), "enable-click", m_click);
     m_scroll = m_conf.get(name(), "enable-scroll", m_scroll);
     m_revscroll = m_conf.get(name(), "reverse-scroll", m_revscroll);
-
-    // Initialize ewmh atoms
-    if ((m_ewmh = ewmh_util::initialize()) == nullptr) {
-      throw module_error("Failed to initialize ewmh atoms");
-    }
+    m_group_by_monitor = m_conf.get(name(), "group-by-monitor", m_group_by_monitor);
 
     // Add formats and elements
     m_formatter->add(DEFAULT_FORMAT, TAG_LABEL_STATE, {TAG_LABEL_STATE, TAG_LABEL_MONITOR});
 
     if (m_formatter->has(TAG_LABEL_MONITOR)) {
       m_monitorlabel = load_optional_label(m_conf, name(), "label-monitor", DEFAULT_LABEL_MONITOR);
+      if (m_monitorlabel && !m_group_by_monitor) {
+        throw module_error("Cannot use label-monitor when not grouping by monitor");
+      }
     }
 
     if (m_formatter->has(TAG_LABEL_STATE)) {
@@ -87,7 +82,7 @@ namespace modules {
     }
 
     // Get list of monitors
-    m_monitors = randr_util::get_monitors(m_connection, m_connection.root(), false);
+    m_monitors = randr_util::get_monitors(m_connection, false);
 
     // Get desktop details
     m_desktop_names = get_desktop_names();
@@ -197,7 +192,9 @@ namespace modules {
     /*
      * Stores the _NET_DESKTOP_VIEWPORT hint
      *
-     * For WMs that don't support that hint, we store an empty vector
+     * For WMs that don't support that hint, or if the user explicitly
+     * disables support via the configuration file, we store an empty
+     * vector.
      *
      * The vector will be padded/reduced to _NET_NUMBER_OF_DESKTOPS.
      * All desktops which aren't explicitly assigned a postion will be
@@ -206,7 +203,7 @@ namespace modules {
      * We use this to map workspaces to viewports, desktop i is at position
      * ws_positions[i].
      */
-    vector<position> ws_positions = ewmh_util::get_desktop_viewports();
+    vector<position> ws_positions = m_group_by_monitor ? ewmh_util::get_desktop_viewports() : vector<position>();
 
     auto num_desktops = m_desktop_names.size();
 

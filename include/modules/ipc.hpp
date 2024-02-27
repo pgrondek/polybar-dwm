@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/static_module.hpp"
+#include "modules/meta/types.hpp"
 #include "utils/command.hpp"
 
 POLYBAR_NS
@@ -24,15 +25,16 @@ namespace modules {
     };
 
    public:
-    explicit ipc_module(const bar_settings&, string);
+    explicit ipc_module(const bar_settings&, string, const config&);
 
     void start() override;
     void update();
     string get_output();
+    string get_format() const;
     bool build(builder* builder, const string& tag) const;
     void on_message(const string& message);
 
-    static constexpr auto TYPE = "custom/ipc";
+    static constexpr auto TYPE = IPC_TYPE;
 
     static constexpr auto EVENT_SEND = "send";
     static constexpr auto EVENT_HOOK = "hook";
@@ -53,16 +55,21 @@ namespace modules {
     bool has_hook() const;
 
     void set_hook(int h);
-
+    void update_output() ;
    private:
-    static constexpr const char* TAG_OUTPUT{"<output>"};
+    static constexpr auto TAG_OUTPUT = "<output>";
+    static constexpr auto TAG_LABEL = "<label>";
+
+    label_t m_label;
+
     vector<unique_ptr<hook>> m_hooks;
     map<mousebtn, string> m_actions;
     string m_output;
+
     int m_initial{-1};
     int m_current_hook{-1};
     void exec_hook();
   };
-}  // namespace modules
+} // namespace modules
 
 POLYBAR_NS_END

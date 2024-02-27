@@ -39,7 +39,7 @@ class controller : public signal_receiver<SIGN_PRIORITY_CONTROLLER, signals::eve
                        signals::ipc::hook, signals::ui::button_press, signals::ui::update_background> {
  public:
   using make_type = unique_ptr<controller>;
-  static make_type make(bool has_ipc, eventloop::loop&);
+  static make_type make(bool has_ipc, eventloop::loop&, const config&);
 
   explicit controller(connection&, signal_emitter&, const logger&, const config&, bool has_ipc, eventloop::loop&);
   ~controller();
@@ -55,12 +55,14 @@ class controller : public signal_receiver<SIGN_PRIORITY_CONTROLLER, signals::eve
   void signal_handler(int signum);
 
   void conn_cb();
+  void create_config_watcher(const string& filename);
   void confwatch_handler(const char* fname);
   void notifier_handler();
   void screenshot_handler();
 
  protected:
   void trigger_notification();
+  void start_modules();
   void read_events(bool confwatch);
   void process_inputdata(string&& cmd);
   bool process_update(bool force);
@@ -100,6 +102,7 @@ class controller : public signal_receiver<SIGN_PRIORITY_CONTROLLER, signals::eve
   eventloop::loop& m_loop;
   unique_ptr<bar> m_bar;
   bool m_has_ipc;
+  string m_tray_module_name;
 
   /**
    * @brief Async handle to notify the eventloop
@@ -107,7 +110,7 @@ class controller : public signal_receiver<SIGN_PRIORITY_CONTROLLER, signals::eve
    * This handle is used to notify the eventloop of changes which are not otherwise covered by other handles.
    * E.g. click actions.
    */
-  eventloop::AsyncHandle& m_notifier{m_loop.handle<eventloop::AsyncHandle>([this]() { notifier_handler(); })};
+  eventloop::async_handle_t m_notifier{m_loop.handle<eventloop::AsyncHandle>([this]() { notifier_handler(); })};
 
   /**
    * Notification data for the controller.

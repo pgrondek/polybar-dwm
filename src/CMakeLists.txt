@@ -97,13 +97,15 @@ set(POLY_SOURCES
   ${src_dir}/modules/memory.cpp
   ${src_dir}/modules/menu.cpp
   ${src_dir}/modules/meta/base.cpp
+  ${src_dir}/modules/meta/factory.cpp
   ${src_dir}/modules/script.cpp
-  ${src_dir}/modules/systray.cpp
   ${src_dir}/modules/temperature.cpp
   ${src_dir}/modules/text.cpp
   ${src_dir}/modules/xbacklight.cpp
   ${src_dir}/modules/xwindow.cpp
   ${src_dir}/modules/xworkspaces.cpp
+  ${src_dir}/modules/tray.cpp
+
 
   ${src_dir}/tags/action_context.cpp
   ${src_dir}/tags/context.cpp
@@ -117,11 +119,11 @@ set(POLY_SOURCES
   ${src_dir}/utils/command.cpp
   ${src_dir}/utils/concurrency.cpp
   ${src_dir}/utils/env.cpp
-  ${src_dir}/utils/factory.cpp
   ${src_dir}/utils/file.cpp
   ${src_dir}/utils/inotify.cpp
   ${src_dir}/utils/io.cpp
   ${src_dir}/utils/process.cpp
+  ${src_dir}/utils/restack.cpp
   ${src_dir}/utils/socket.cpp
   ${src_dir}/utils/string.cpp
   ${src_dir}/utils/units.cpp
@@ -134,6 +136,7 @@ set(POLY_SOURCES
   ${src_dir}/x11/extensions/randr.cpp
   ${src_dir}/x11/icccm.cpp
   ${src_dir}/x11/registry.cpp
+  ${src_dir}/x11/legacy_tray_manager.cpp
   ${src_dir}/x11/tray_client.cpp
   ${src_dir}/x11/tray_manager.cpp
   ${src_dir}/x11/window.cpp

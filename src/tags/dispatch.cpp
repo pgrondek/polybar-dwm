@@ -2,11 +2,12 @@
 
 #include <algorithm>
 
+#include "components/renderer.hpp"
 #include "events/signal.hpp"
-#include "events/signal_emitter.hpp"
 #include "settings.hpp"
 #include "tags/parser.hpp"
 #include "utils/color.hpp"
+#include "components/logger.hpp"
 
 POLYBAR_NS
 
@@ -74,19 +75,16 @@ namespace tags {
                 m_ctxt->apply_ul(el.tag_data.color);
                 break;
               case tags::syntaxtag::P:
-                handle_control(el.tag_data.ctrl);
+                handle_control(renderer, el.tag_data.ctrl);
                 break;
               case tags::syntaxtag::l:
-                m_ctxt->apply_alignment(alignment::LEFT);
-                renderer.change_alignment(*m_ctxt);
+                handle_alignment(renderer, alignment::LEFT);
                 break;
               case tags::syntaxtag::r:
-                m_ctxt->apply_alignment(alignment::RIGHT);
-                renderer.change_alignment(*m_ctxt);
+                handle_alignment(renderer, alignment::RIGHT);
                 break;
               case tags::syntaxtag::c:
-                m_ctxt->apply_alignment(alignment::CENTER);
-                renderer.change_alignment(*m_ctxt);
+                handle_alignment(renderer, alignment::CENTER);
                 break;
               default:
                 throw runtime_error(
@@ -116,6 +114,7 @@ namespace tags {
     for (auto a : {alignment::LEFT, alignment::CENTER, alignment::RIGHT}) {
       m_action_ctxt.set_alignment_start(a, renderer.get_alignment_start(a));
     }
+    renderer.apply_tray_position(*m_ctxt);
 
     auto num_unclosed = m_action_ctxt.num_unclosed();
 
@@ -150,10 +149,18 @@ namespace tags {
     renderer.render_offset(*m_ctxt, offset);
   }
 
-  void dispatch::handle_control(controltag ctrl) {
+  void dispatch::handle_alignment(renderer_interface& renderer, alignment a) {
+    m_ctxt->apply_alignment(a);
+    renderer.change_alignment(*m_ctxt);
+  }
+
+  void dispatch::handle_control(renderer_interface& renderer, controltag ctrl) {
     switch (ctrl) {
       case controltag::R:
         m_ctxt->apply_reset();
+        break;
+      case controltag::t:
+        m_ctxt->store_tray_position(renderer.get_x(*m_ctxt));
         break;
       default:
         throw runtime_error("Unrecognized polybar control tag: " + to_string(static_cast<int>(ctrl)));

@@ -174,13 +174,113 @@ TEST(String, filesize) {
   EXPECT_EQ("3 TB", string_util::filesize((unsigned long long)3 * 1024 * 1024 * 1024 * 1024));
 }
 
-TEST(String, operators) {
-  string foo = "foobar";
-  EXPECT_EQ("foo", foo - "bar");
-  string baz = "bazbaz";
-  EXPECT_EQ("bazbaz", baz - "ba");
-  EXPECT_EQ("bazbaz", baz - "baZ");
-  EXPECT_EQ("bazbaz", baz - "bazbz");
-  string aaa = "aaa";
-  EXPECT_EQ("aaa", aaa - "aaaaa");
+// utf8_to_ucs4 {{{
+class Utf8ToUCS4AsciiTest : public testing::TestWithParam<string> {};
+
+const vector<string> utf8_to_ucs4_ascii_list = {"", "Hello World", "\n", "\0", "\u007f"};
+
+INSTANTIATE_TEST_SUITE_P(Inst, Utf8ToUCS4AsciiTest, testing::ValuesIn(utf8_to_ucs4_ascii_list));
+
+/**
+ * Test that the conversion to ucs4 works correctly with pure ASCII strings.
+ */
+TEST_P(Utf8ToUCS4AsciiTest, correctness) {
+  string_util::unicode_charlist result_list{};
+  string str = GetParam();
+
+  bool valid = string_util::utf8_to_ucs4(str, result_list);
+  ASSERT_TRUE(valid);
+
+  ASSERT_EQ(str.size(), result_list.size());
+
+  for (size_t i = 0; i < str.size(); i++) {
+    const auto& unicode_char = result_list[i];
+    auto c = str[i];
+
+    // Matches the single byte character
+    EXPECT_EQ(c, unicode_char.codepoint);
+    // Is at the same offset as in the original string
+    EXPECT_EQ(i, unicode_char.offset);
+    // Only takes a single byte
+    EXPECT_EQ(1, unicode_char.length);
+  }
 }
+
+// String containing a single codepoint and the expected numerical codepoint
+using single_test_t = std::pair<string, uint32_t>;
+class Utf8ToUCS4SingleTest : public testing::TestWithParam<single_test_t> {};
+
+const vector<single_test_t> utf8_to_ucs4_single_list = {
+    {" ", 0x20},              // Single ASCII character
+    {"\u007f", 0x7f},         // End of 1 byte range
+    {"\u0080", 0x80},         // Start of 2 byte range
+    {"\u07ff", 0x7ff},        // End of 2 byte range
+    {"\u0800", 0x800},        // Start of 3 byte range
+    {"\uffff", 0xffff},       // End of 3 byte range
+    {"\U00010000", 0x10000},  // Start of 4 byte range
+    {"\U0010ffff", 0x10ffff}, // End of 4 byte range
+    {"\U0001f600", 0x1f600},  // Grinning face emoji
+};
+
+INSTANTIATE_TEST_SUITE_P(Inst, Utf8ToUCS4SingleTest, testing::ValuesIn(utf8_to_ucs4_single_list));
+
+/**
+ * Test that the conversion to ucs4 works correctly with a single UTF8 character
+ */
+TEST_P(Utf8ToUCS4SingleTest, correctness) {
+  string_util::unicode_charlist result_list{};
+  const auto [str, codepoint] = GetParam();
+
+  bool valid = string_util::utf8_to_ucs4(str, result_list);
+  ASSERT_TRUE(valid);
+
+  ASSERT_EQ(1, result_list.size());
+
+  auto unicode_char = result_list.front();
+
+  EXPECT_EQ(0, unicode_char.offset);
+  // Must encompass entire string
+  EXPECT_EQ(str.size(), unicode_char.length);
+  // Must match expected codepoint
+  EXPECT_EQ(codepoint, unicode_char.codepoint);
+}
+
+class Utf8ToUCS4InvalidTest : public testing::TestWithParam<string> {};
+
+const vector<string> utf8_to_ucs4_invalid_list = {
+    "\x80",         // continuation byte without leading byte
+    "\xa0",         // 2 byte code point with only leading byte
+    "\xe0",         // 3 byte code point with only leading byte
+    "\xf0",         // 4 byte code point with only leading byte
+    "\xf0\x80\x80", // 4 byte code point with only 3 bytes
+    "\xe0\xf0\x80", // 3 byte code point, 2nd byte has no continuation prefix
+};
+
+INSTANTIATE_TEST_SUITE_P(Inst, Utf8ToUCS4InvalidTest, testing::ValuesIn(utf8_to_ucs4_invalid_list));
+
+/**
+ * Tests that the conversion correctly returns false for invalid strings.
+ */
+TEST_P(Utf8ToUCS4InvalidTest, correctness) {
+  string_util::unicode_charlist result_list{};
+  const auto str = GetParam();
+  bool valid = string_util::utf8_to_ucs4(str, result_list);
+  EXPECT_FALSE(valid);
+  EXPECT_EQ(0, result_list.size());
+}
+
+/**
+ * Tests that the conversion works with partially valid strings and that invalid parts are dropped.
+ */
+TEST(String, utf8ToUCS4Partial) {
+  string_util::unicode_charlist result_list{};
+  string str = "\xe0\x70\x80"; // a valid ascii character between two invalid characters
+  bool valid = string_util::utf8_to_ucs4(str, result_list);
+  EXPECT_FALSE(valid);
+  EXPECT_EQ(1, result_list.size());
+
+  EXPECT_EQ(0x70, result_list[0].codepoint);
+  EXPECT_EQ(1, result_list[0].offset);
+  EXPECT_EQ(1, result_list[0].length);
+}
+// }}}

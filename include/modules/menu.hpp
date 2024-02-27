@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/static_module.hpp"
+#include "modules/meta/types.hpp"
 
 POLYBAR_NS
 
@@ -17,12 +18,12 @@ namespace modules {
     };
 
    public:
-    explicit menu_module(const bar_settings&, string);
+    explicit menu_module(const bar_settings&, string, const config&);
 
     bool build(builder* builder, const string& tag) const;
     void update() {}
 
-    static constexpr auto TYPE = "custom/menu";
+    static constexpr auto TYPE = MENU_TYPE;
 
     static constexpr auto EVENT_OPEN = "open";
     static constexpr auto EVENT_CLOSE = "close";

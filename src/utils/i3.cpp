@@ -1,9 +1,11 @@
+#include "utils/i3.hpp"
+
 #include <xcb/xcb.h>
+
 #include <i3ipc++/ipc.hpp>
 
 #include "common.hpp"
 #include "settings.hpp"
-#include "utils/i3.hpp"
 #include "utils/socket.hpp"
 #include "utils/string.hpp"
 #include "x11/connection.hpp"
@@ -42,7 +44,7 @@ namespace i3_util {
    * Get main root window
    */
   xcb_window_t root_window(connection& conn) {
-    auto children = conn.query_tree(conn.screen()->root).children();
+    auto children = conn.query_tree(conn.root()).children();
     const auto wm_name = [&](xcb_connection_t* conn, xcb_window_t win) -> string {
       string title;
       if (!(title = ewmh_util::get_wm_name(win)).empty()) {
@@ -64,20 +66,11 @@ namespace i3_util {
   }
 
   /**
-   * Restack given window relative to the i3 root window
-   * defined for the given monitor
-   *
-   * Fixes the issue with always-on-top window's
+   * Returns window against which to restack.
    */
-  bool restack_to_root(connection& conn, const xcb_window_t win) {
-    const unsigned int value_mask = XCB_CONFIG_WINDOW_SIBLING | XCB_CONFIG_WINDOW_STACK_MODE;
-    const unsigned int value_list[2]{root_window(conn), XCB_STACK_MODE_ABOVE};
-    if (value_list[0] != XCB_NONE) {
-      conn.configure_window_checked(win, value_mask, value_list);
-      return true;
-    }
-    return false;
+  restack_util::params get_restack_params(connection& conn) {
+    return {root_window(conn), XCB_STACK_MODE_ABOVE};
   }
-}
+} // namespace i3_util
 
 POLYBAR_NS_END

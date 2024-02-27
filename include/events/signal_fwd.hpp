@@ -35,8 +35,8 @@ namespace signals {
     struct update_geometry;
   } // namespace ui
   namespace ui_tray {
-    struct mapped_clients;
-  }
+    struct tray_pos_change;
+  } // namespace ui_tray
 } // namespace signals
 
 POLYBAR_NS_END

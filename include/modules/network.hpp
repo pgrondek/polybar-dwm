@@ -3,6 +3,7 @@
 #include "adapters/net.hpp"
 #include "components/config.hpp"
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 
 POLYBAR_NS
 
@@ -11,14 +12,14 @@ namespace modules {
 
   class network_module : public timer_module<network_module> {
    public:
-    explicit network_module(const bar_settings&, string);
+    explicit network_module(const bar_settings&, string, const config&);
 
     void teardown();
     bool update();
     string get_format() const;
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/network";
+    static constexpr auto TYPE = NETWORK_TYPE;
 
    protected:
     void subthread_routine();

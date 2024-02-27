@@ -22,8 +22,8 @@ using namespace signals::eventqueue;
 /**
  * Create instance
  */
-screen::make_type screen::make() {
-  return std::make_unique<screen>(connection::make(), signal_emitter::make(), logger::make(), config::make());
+screen::make_type screen::make(const config& config) {
+  return std::make_unique<screen>(connection::make(), signal_emitter::make(), logger::make(), config);
 }
 
 /**
@@ -35,7 +35,7 @@ screen::screen(connection& conn, signal_emitter& emitter, const logger& logger, 
     , m_log(logger)
     , m_conf(conf)
     , m_root(conn.root())
-    , m_monitors(randr_util::get_monitors(m_connection, m_root, true, false))
+    , m_monitors(randr_util::get_monitors(m_connection, true, false))
     , m_size({conn.screen()->width_in_pixels, conn.screen()->height_in_pixels}) {
   // Check if the reloading has been disabled by the user
   if (!m_conf.get("settings", "screenchange-reload", false)) {
@@ -54,26 +54,19 @@ screen::screen(connection& conn, signal_emitter& emitter, const logger& logger, 
 
   // Update the root windows event mask
   auto attributes = m_connection.get_window_attributes(m_root);
-  auto root_mask = attributes->your_event_mask;
+  m_root_mask = attributes->your_event_mask;
   attributes->your_event_mask = attributes->your_event_mask | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
   m_connection.change_window_attributes(m_root, XCB_CW_EVENT_MASK, &attributes->your_event_mask);
 
   // Receive randr events
   m_connection.randr().select_input(m_proxy, XCB_RANDR_NOTIFY_MASK_SCREEN_CHANGE);
 
+  // Attach the sink to process randr events
+  m_connection.attach_sink(this, SINK_PRIORITY_SCREEN);
+
   // Create window used as event proxy
   m_connection.map_window(m_proxy);
   m_connection.flush();
-
-  // Wait until the proxy window has been mapped
-  using evt = xcb_map_notify_event_t;
-  m_connection.wait_for_response<evt, XCB_MAP_NOTIFY>([&](const evt* evt) -> bool { return evt->window == m_proxy; });
-
-  // Restore the root windows event mask
-  m_connection.change_window_attributes(m_root, XCB_CW_EVENT_MASK, &root_mask);
-
-  // Finally attach the sink the process randr events
-  m_connection.attach_sink(this, SINK_PRIORITY_SCREEN);
 }
 
 /**
@@ -87,6 +80,15 @@ screen::~screen() {
   }
 }
 
+void screen::handle(const evt::map_notify& evt) {
+  if (evt->window != m_proxy) {
+    return;
+  }
+
+  // Once the proxy window has been mapped, restore the original root window event mask.
+  m_connection.change_window_attributes(m_root, XCB_CW_EVENT_MASK, &m_root_mask);
+}
+
 /**
  * Handle XCB_RANDR_SCREEN_CHANGE_NOTIFY events
  *
@@ -97,7 +99,8 @@ void screen::handle(const evt::randr_screen_change_notify& evt) {
     return;
   }
 
-  auto screen = m_connection.screen(true);
+  m_connection.reset_screen();
+  auto screen = m_connection.screen();
   auto changed = false;
 
   // We need to reload if the screen size changed as well
@@ -120,7 +123,7 @@ void screen::handle(const evt::randr_screen_change_notify& evt) {
  * Fetches the monitor list and compares it with the one stored
  */
 bool screen::have_monitors_changed() const {
-  auto monitors = randr_util::get_monitors(m_connection, m_root, true, false);
+  auto monitors = randr_util::get_monitors(m_connection, true, false);
 
   if (monitors.size() != m_monitors.size()) {
     return true;

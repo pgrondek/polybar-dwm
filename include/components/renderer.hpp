@@ -46,13 +46,15 @@ class renderer : public renderer_interface,
                  public signal_receiver<SIGN_PRIORITY_RENDERER, signals::ui::request_snapshot> {
  public:
   using make_type = unique_ptr<renderer>;
-  static make_type make(const bar_settings& bar, tags::action_context& action_ctxt);
+  static make_type make(const bar_settings& bar, tags::action_context& action_ctxt, const config&);
 
   explicit renderer(connection& conn, signal_emitter& sig, const config&, const logger& logger, const bar_settings& bar,
       background_manager& background_manager, tags::action_context& action_ctxt);
   ~renderer();
 
   xcb_window_t window() const;
+  xcb_visualtype_t* visual() const;
+  int depth() const;
 
   void begin(xcb_rectangle_t rect);
   void end();
@@ -66,6 +68,8 @@ class renderer : public renderer_interface,
   double get_x(const tags::context& ctxt) const override;
 
   double get_alignment_start(const alignment align) const override;
+
+  void apply_tray_position(const tags::context& context) override;
 
  protected:
   void fill_background();
@@ -100,17 +104,21 @@ class renderer : public renderer_interface,
   const bar_settings& m_bar;
   std::shared_ptr<bg_slice> m_background;
 
-  int m_depth{32};
+  int m_depth{-1};
   xcb_window_t m_window;
-  xcb_colormap_t m_colormap;
+  xcb_colormap_t m_colormap{XCB_NONE};
   xcb_visualtype_t* m_visual;
   xcb_gcontext_t m_gcontext;
+
+  /**
+   * Background pixmap for the bar window
+   *
+   * All bar contents are rendered onto this.
+   */
   xcb_pixmap_t m_pixmap;
 
   xcb_rectangle_t m_rect{0, 0, 0U, 0U};
   reserve_area m_cleararea{};
-
-  // bool m_autosize{false};
 
   unique_ptr<cairo::context> m_context;
   unique_ptr<cairo::xcb_surface> m_surface;

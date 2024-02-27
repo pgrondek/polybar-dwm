@@ -2,6 +2,7 @@
 
 #include "components/config.hpp"
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 #include "settings.hpp"
 
 POLYBAR_NS
@@ -35,14 +36,14 @@ namespace modules {
    */
   class fs_module : public timer_module<fs_module> {
    public:
-    explicit fs_module(const bar_settings&, string);
+    explicit fs_module(const bar_settings&, string, const config&);
 
     bool update();
     string get_format() const;
     string get_output();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/fs";
+    static constexpr auto TYPE = FS_TYPE;
 
    private:
     static constexpr auto FORMAT_MOUNTED = "format-mounted";

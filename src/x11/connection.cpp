@@ -1,3 +1,5 @@
+#include "x11/connection.hpp"
+
 #include <algorithm>
 #include <iomanip>
 
@@ -6,7 +8,6 @@
 #include "utils/memory.hpp"
 #include "utils/string.hpp"
 #include "x11/atoms.hpp"
-#include "x11/connection.hpp"
 
 POLYBAR_NS
 
@@ -19,25 +20,21 @@ connection::make_type connection::make(xcb_connection_t* conn, int default_scree
 }
 
 connection::connection(xcb_connection_t* c, int default_screen) : base_type(c, default_screen) {
-  // Preload required xcb atoms {{{
-
-  vector<xcb_intern_atom_cookie_t> cookies(memory_util::countof(ATOMS));
-  xcb_intern_atom_reply_t* reply{nullptr};
+  // Preload required xcb atoms
+  vector<xcb_intern_atom_cookie_t> cookies(ATOMS.size());
 
   for (size_t i = 0; i < cookies.size(); i++) {
-    cookies[i] = xcb_intern_atom_unchecked(*this, false, ATOMS[i].len, ATOMS[i].name);
+    cookies[i] = xcb_intern_atom_unchecked(*this, false, ATOMS[i].name.size(), ATOMS[i].name.data());
   }
 
   for (size_t i = 0; i < cookies.size(); i++) {
-    if ((reply = xcb_intern_atom_reply(*this, cookies[i], nullptr)) != nullptr) {
-      *ATOMS[i].atom = reply->atom;
+    malloc_unique_ptr<xcb_intern_atom_reply_t> reply(xcb_intern_atom_reply(*this, cookies[i], nullptr), free);
+    if (reply) {
+      ATOMS[i].atom = reply->atom;
     }
-
-    free(reply);
   }
 
-// }}}
-// Query for X extensions {{{
+// Query for X extensions
 #if WITH_XRANDR
   randr_util::query_extension(*this);
 #endif
@@ -47,28 +44,32 @@ connection::connection(xcb_connection_t* c, int default_screen) : base_type(c, d
 #if WITH_XKB
   xkb_util::query_extension(*this);
 #endif
-  // }}}
 }
 
 connection::~connection() {
   disconnect();
 }
 
-void connection::pack_values(unsigned int mask, const unsigned int* src, unsigned int* dest) {
-  for (; mask; mask >>= 1, src++) {
-    if (mask & 1) {
-      *dest++ = *src;
+/**
+ * Packs data in src into the dest array.
+ *
+ * Each value in src is transferred into dest, if the corresponding bit in the
+ * mask is set.
+ *
+ * Required if parameters were set using XCB_AUX_ADD_PARAM but a value_list is needed in the function call.
+ *
+ * @param mask bitmask specifying which entries in src are selected
+ * @param src Array of 32-bit integers. Must have at least as many entries as the highest bit set in mask
+ * @param dest Entries from src are packed into this array
+ */
+void connection::pack_values(uint32_t mask, const void* src, std::array<uint32_t, 32>& dest) {
+  size_t dest_i = 0;
+  for (size_t i = 0; i < dest.size() && mask; i++, mask >>= 1) {
+    if (mask & 0x1) {
+      dest[dest_i] = reinterpret_cast<const uint32_t*>(src)[i];
+      dest_i++;
     }
   }
-}
-void connection::pack_values(unsigned int mask, const xcb_params_cw_t* src, unsigned int* dest) {
-  pack_values(mask, reinterpret_cast<const unsigned int*>(src), dest);
-}
-void connection::pack_values(unsigned int mask, const xcb_params_gc_t* src, unsigned int* dest) {
-  pack_values(mask, reinterpret_cast<const unsigned int*>(src), dest);
-}
-void connection::pack_values(unsigned int mask, const xcb_params_configure_window_t* src, unsigned int* dest) {
-  pack_values(mask, reinterpret_cast<const unsigned int*>(src), dest);
 }
 
 /**
@@ -78,11 +79,15 @@ string connection::id(xcb_window_t w) const {
   return sstream() << "0x" << std::hex << std::setw(7) << std::setfill('0') << w;
 }
 
+void connection::reset_screen() {
+  m_screen = nullptr;
+}
+
 /**
  * Get pointer to the default xcb screen
  */
-xcb_screen_t* connection::screen(bool realloc) {
-  if (m_screen == nullptr || realloc) {
+xcb_screen_t* connection::screen() {
+  if (m_screen == nullptr) {
     m_screen = screen_of_display(default_screen());
   }
   return m_screen;
@@ -108,20 +113,19 @@ void connection::clear_event_mask(xcb_window_t win) {
 /**
  * Creates an instance of shared_ptr<xcb_client_message_event_t>
  */
-shared_ptr<xcb_client_message_event_t> connection::make_client_message(xcb_atom_t type, xcb_window_t target) const {
-  auto client_message = memory_util::make_malloc_ptr<xcb_client_message_event_t, 32_z>();
+xcb_client_message_event_t connection::make_client_message(xcb_atom_t type, xcb_window_t target) const {
+  xcb_client_message_event_t client_message;
+  client_message.response_type = XCB_CLIENT_MESSAGE;
+  client_message.format = 32;
+  client_message.type = type;
+  client_message.window = target;
 
-  client_message->response_type = XCB_CLIENT_MESSAGE;
-  client_message->format = 32;
-  client_message->type = type;
-  client_message->window = target;
-
-  client_message->sequence = 0;
-  client_message->data.data32[0] = 0;
-  client_message->data.data32[1] = 0;
-  client_message->data.data32[2] = 0;
-  client_message->data.data32[3] = 0;
-  client_message->data.data32[4] = 0;
+  client_message.sequence = 0;
+  client_message.data.data32[0] = 0;
+  client_message.data.data32[1] = 0;
+  client_message.data.data32[2] = 0;
+  client_message.data.data32[3] = 0;
+  client_message.data.data32[4] = 0;
 
   return client_message;
 }
@@ -129,9 +133,9 @@ shared_ptr<xcb_client_message_event_t> connection::make_client_message(xcb_atom_
 /**
  * Send client message event
  */
-void connection::send_client_message(const shared_ptr<xcb_client_message_event_t>& message, xcb_window_t target,
-    unsigned int event_mask, bool propagate) const {
-  send_event(propagate, target, event_mask, reinterpret_cast<const char*>(&*message));
+void connection::send_client_message(
+    const xcb_client_message_event_t& message, xcb_window_t target, unsigned int event_mask, bool propagate) const {
+  send_event(propagate, target, event_mask, reinterpret_cast<const char*>(&message));
   flush();
 }
 
@@ -139,34 +143,12 @@ void connection::send_client_message(const shared_ptr<xcb_client_message_event_t
  * Try to get a visual type for the given screen that
  * matches the given depth
  */
-xcb_visualtype_t* connection::visual_type(xcb_screen_t* screen, int match_depth) {
-  xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(screen);
-  if (depth_iter.data) {
-    for (; depth_iter.rem; xcb_depth_next(&depth_iter)) {
-      if (match_depth == 0 || match_depth == depth_iter.data->depth) {
-        for (auto it = xcb_depth_visuals_iterator(depth_iter.data); it.rem; xcb_visualtype_next(&it)) {
-          return it.data;
-        }
-      }
-    }
-    if (match_depth > 0) {
-      return visual_type(screen, 0);
-    }
-  }
-  return nullptr;
+xcb_visualtype_t* connection::visual_type(xcb_visual_class_t class_, int match_depth) {
+  return xcb_aux_find_visual_by_attrs(screen(), class_, match_depth);
 }
 
-
-xcb_visualtype_t* connection::visual_type_for_id(xcb_screen_t* screen, xcb_visualid_t visual_id) {
-  xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(screen);
-  if (depth_iter.data) {
-    for (; depth_iter.rem; xcb_depth_next(&depth_iter)) {
-      for (auto it = xcb_depth_visuals_iterator(depth_iter.data); it.rem; xcb_visualtype_next(&it)) {
-        if(it.data->visual_id == visual_id) return it.data;
-      }
-    }
-  }
-  return nullptr;
+xcb_visualtype_t* connection::visual_type_for_id(xcb_visualid_t visual_id) {
+  return xcb_aux_find_visual_by_id(screen(), visual_id);
 }
 
 /**
@@ -189,7 +171,7 @@ bool connection::root_pixmap(xcb_pixmap_t* pixmap, int* depth, xcb_rectangle_t* 
   const xcb_atom_t pixmap_properties[3]{_XROOTPMAP_ID, ESETROOT_PMAP_ID, _XSETROOT_ID};
   for (auto&& property : pixmap_properties) {
     try {
-      auto prop = get_property(false, screen()->root, property, XCB_ATOM_PIXMAP, 0L, 1L);
+      auto prop = get_property(false, root(), property, XCB_ATOM_PIXMAP, 0L, 1L);
       if (prop->format == 32 && prop->value_len == 1) {
         *pixmap = *prop.value<xcb_pixmap_t>().begin();
       }

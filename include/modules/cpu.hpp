@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 #include "settings.hpp"
 
 POLYBAR_NS
@@ -20,13 +21,13 @@ namespace modules {
 
   class cpu_module : public timer_module<cpu_module> {
    public:
-    explicit cpu_module(const bar_settings&, string);
+    explicit cpu_module(const bar_settings&, string, const config&);
 
     bool update();
     string get_format() const;
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/cpu";
+    static constexpr auto TYPE = CPU_TYPE;
 
    protected:
     bool read_values();

@@ -6,6 +6,7 @@
 #include "drawtypes/layouticonset.hpp"
 #include "modules/meta/event_handler.hpp"
 #include "modules/meta/static_module.hpp"
+#include "modules/meta/types.hpp"
 #include "x11/extensions/xkb.hpp"
 #include "x11/window.hpp"
 
@@ -21,13 +22,13 @@ namespace modules {
       : public static_module<xkeyboard_module>,
         public event_handler<evt::xkb_new_keyboard_notify, evt::xkb_state_notify, evt::xkb_indicator_state_notify> {
    public:
-    explicit xkeyboard_module(const bar_settings& bar, string name_);
+    explicit xkeyboard_module(const bar_settings& bar, string name_, const config&);
 
     string get_output();
     void update();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/xkeyboard";
+    static constexpr auto TYPE = XKEYBOARD_TYPE;
 
     static constexpr const char* EVENT_SWITCH = "switch";
 

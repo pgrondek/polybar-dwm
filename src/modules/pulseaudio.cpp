@@ -13,8 +13,8 @@ POLYBAR_NS
 namespace modules {
   template class module<pulseaudio_module>;
 
-  pulseaudio_module::pulseaudio_module(const bar_settings& bar, string name_)
-      : event_module<pulseaudio_module>(bar, move(name_)) {
+  pulseaudio_module::pulseaudio_module(const bar_settings& bar, string name_, const config& config)
+      : event_module<pulseaudio_module>(bar, move(name_), config) {
     if (m_handle_events) {
       m_router->register_action(EVENT_DEC, [this]() { action_dec(); });
       m_router->register_action(EVENT_INC, [this]() { action_inc(); });
@@ -26,6 +26,7 @@ namespace modules {
 
     auto sink_name = m_conf.get(name(), "sink", ""s);
     bool m_max_volume = m_conf.get(name(), "use-ui-max", true);
+    m_reverse_scroll = m_conf.get(name(), "reverse-scroll", false);
 
     try {
       m_pulseaudio = std::make_unique<pulseaudio>(m_log, move(sink_name), m_max_volume);
@@ -125,8 +126,13 @@ namespace modules {
       }
 
       m_builder->action(mousebtn::LEFT, *this, EVENT_TOGGLE, "");
-      m_builder->action(mousebtn::SCROLL_UP, *this, EVENT_INC, "");
-      m_builder->action(mousebtn::SCROLL_DOWN, *this, EVENT_DEC, "");
+      if (!m_reverse_scroll) {
+        m_builder->action(mousebtn::SCROLL_UP, *this, EVENT_INC, "");
+        m_builder->action(mousebtn::SCROLL_DOWN, *this, EVENT_DEC, "");
+      } else {
+        m_builder->action(mousebtn::SCROLL_UP, *this, EVENT_DEC, "");
+        m_builder->action(mousebtn::SCROLL_DOWN, *this, EVENT_INC, "");
+      }
     }
 
     m_builder->node(output);

@@ -21,12 +21,12 @@ static constexpr double BLOCK_GAP{20.0};
 /**
  * Create instance
  */
-renderer::make_type renderer::make(const bar_settings& bar, tags::action_context& action_ctxt) {
+renderer::make_type renderer::make(const bar_settings& bar, tags::action_context& action_ctxt, const config& conf) {
   // clang-format off
   return std::make_unique<renderer>(
       connection::make(),
       signal_emitter::make(),
-      config::make(),
+      conf,
       logger::make(),
       forward<decltype(bar)>(bar),
       background_manager::make(),
@@ -47,65 +47,65 @@ renderer::renderer(connection& conn, signal_emitter& sig, const config& conf, co
     , m_bar(forward<const bar_settings&>(bar))
     , m_rect(m_bar.inner_area()) {
   m_sig.attach(this);
-  m_log.trace("renderer: Get TrueColor visual");
-  {
-    if ((m_visual = m_connection.visual_type(m_connection.screen(), 32)) == nullptr) {
-      m_log.err("No 32-bit TrueColor visual found...");
 
-      if ((m_visual = m_connection.visual_type(m_connection.screen(), 24)) == nullptr) {
-        m_log.err("No 24-bit TrueColor visual found...");
-      } else {
-        m_depth = 24;
-      }
-    }
-    if (m_visual == nullptr) {
-      throw application_error("No matching TrueColor");
-    }
+  m_log.trace("renderer: Get TrueColor visual");
+  if ((m_visual = m_connection.visual_type(XCB_VISUAL_CLASS_TRUE_COLOR, 32)) != nullptr) {
+    m_depth = 32;
+  } else if ((m_visual = m_connection.visual_type(XCB_VISUAL_CLASS_TRUE_COLOR, 24)) != nullptr) {
+    m_depth = 24;
+  } else {
+    throw application_error("Could not find a 24 or 32-bit TrueColor visual");
   }
+
+  m_log.info("renderer: Using %d-bit TrueColor visual: 0x%x", m_depth, m_visual->visual_id);
 
   m_log.trace("renderer: Allocate colormap");
-  {
-    m_colormap = m_connection.generate_id();
-    m_connection.create_colormap(XCB_COLORMAP_ALLOC_NONE, m_colormap, m_connection.screen()->root, m_visual->visual_id);
-  }
+  m_colormap = m_connection.generate_id();
+  m_connection.create_colormap(XCB_COLORMAP_ALLOC_NONE, m_colormap, m_connection.root(), m_visual->visual_id);
 
   m_log.trace("renderer: Allocate output window");
-  {
-    // clang-format off
-    m_window = winspec(m_connection)
-      << cw_size(m_bar.size)
-      << cw_pos(m_bar.pos)
-      << cw_depth(m_depth)
-      << cw_visual(m_visual->visual_id)
-      << cw_class(XCB_WINDOW_CLASS_INPUT_OUTPUT)
-      << cw_params_back_pixel(0)
-      << cw_params_border_pixel(0)
-      << cw_params_backing_store(XCB_BACKING_STORE_WHEN_MAPPED)
-      << cw_params_colormap(m_colormap)
-      << cw_params_event_mask(XCB_EVENT_MASK_PROPERTY_CHANGE
-                             |XCB_EVENT_MASK_EXPOSURE
-                             |XCB_EVENT_MASK_BUTTON_PRESS)
-      << cw_params_override_redirect(m_bar.override_redirect)
-      << cw_flush(true);
-    // clang-format on
-  }
+  // clang-format off
+  m_window = winspec(m_connection)
+    << cw_size(m_bar.size)
+    << cw_pos(m_bar.pos)
+    << cw_depth(m_depth)
+    << cw_visual(m_visual->visual_id)
+    << cw_class(XCB_WINDOW_CLASS_INPUT_OUTPUT)
+    << cw_params_back_pixel(0)
+    << cw_params_border_pixel(0)
+    << cw_params_backing_store(XCB_BACKING_STORE_WHEN_MAPPED)
+    << cw_params_colormap(m_colormap)
+    << cw_params_event_mask(XCB_EVENT_MASK_PROPERTY_CHANGE
+                           |XCB_EVENT_MASK_EXPOSURE
+                           |XCB_EVENT_MASK_BUTTON_PRESS)
+    << cw_params_override_redirect(m_bar.override_redirect)
+    << cw_flush(true);
+  // clang-format on
 
   m_log.trace("renderer: Allocate window pixmaps");
   {
     m_pixmap = m_connection.generate_id();
     m_connection.create_pixmap(m_depth, m_pixmap, m_window, m_bar.size.w, m_bar.size.h);
+
+    uint32_t configure_mask = 0;
+    std::array<uint32_t, 32> configure_values{};
+    xcb_params_cw_t configure_params{};
+
+    XCB_AUX_ADD_PARAM(&configure_mask, &configure_params, back_pixmap, m_pixmap);
+    connection::pack_values(configure_mask, &configure_params, configure_values);
+    m_connection.change_window_attributes_checked(m_window, configure_mask, configure_values.data());
   }
 
   m_log.trace("renderer: Allocate graphic contexts");
   {
-    unsigned int mask{0};
-    unsigned int value_list[32]{0};
+    uint32_t mask{0};
+    std::array<uint32_t, 32> value_list{};
     xcb_params_gc_t params{};
     XCB_AUX_ADD_PARAM(&mask, &params, foreground, m_bar.foreground);
     XCB_AUX_ADD_PARAM(&mask, &params, graphics_exposures, 0);
     connection::pack_values(mask, &params, value_list);
     m_gcontext = m_connection.generate_id();
-    m_connection.create_gc(m_gcontext, m_pixmap, mask, value_list);
+    m_connection.create_gc(m_gcontext, m_pixmap, mask, value_list.data());
   }
 
   m_log.trace("renderer: Allocate alignment blocks");
@@ -166,10 +166,24 @@ renderer::~renderer() {
 }
 
 /**
- * Get output window
+ * Get bar window
  */
 xcb_window_t renderer::window() const {
   return m_window;
+}
+
+/**
+ * Get the bar window visual
+ */
+xcb_visualtype_t* renderer::visual() const {
+  return m_visual;
+}
+
+/**
+ * Get the bar window depth
+ */
+int renderer::depth() const {
+  return m_depth;
 }
 
 /**
@@ -358,7 +372,8 @@ void renderer::flush() {
   highlight_clickable_areas();
 
   m_surface->flush();
-  m_connection.copy_area(m_pixmap, m_window, m_gcontext, 0, 0, 0, 0, m_bar.size.w, m_bar.size.h);
+  // Clear entire window so that the new pixmap is shown
+  m_connection.clear_area(0, m_window, 0, 0, m_bar.size.w, m_bar.size.h);
   m_connection.flush();
 
   if (!m_snapshot_dst.empty()) {
@@ -673,6 +688,7 @@ void renderer::fill_borders() {
  * Draw text contents
  */
 void renderer::render_text(const tags::context& ctxt, const string&& contents) {
+  assert(ctxt.get_alignment() != alignment::NONE && ctxt.get_alignment() == m_align);
   m_log.trace_x("renderer: text(%s)", contents.c_str());
 
   cairo::abspos origin{};
@@ -754,6 +770,7 @@ void renderer::draw_offset(const tags::context& ctxt, rgba color, double x, doub
 }
 
 void renderer::render_offset(const tags::context& ctxt, const extent_val offset) {
+  assert(ctxt.get_alignment() != alignment::NONE && ctxt.get_alignment() == m_align);
   m_log.trace_x("renderer: offset_pixel(%f)", offset);
 
   int offset_width = units_utils::extent_to_pixel(offset, m_bar.dpi_x);
@@ -764,6 +781,7 @@ void renderer::render_offset(const tags::context& ctxt, const extent_val offset)
 
 void renderer::change_alignment(const tags::context& ctxt) {
   auto align = ctxt.get_alignment();
+  assert(align != alignment::NONE);
   if (align != m_align) {
     m_log.trace_x("renderer: change_alignment(%i)", static_cast<int>(align));
 
@@ -784,6 +802,7 @@ void renderer::change_alignment(const tags::context& ctxt) {
 }
 
 double renderer::get_x(const tags::context& ctxt) const {
+  assert(ctxt.get_alignment() != alignment::NONE && ctxt.get_alignment() == m_align);
   return m_blocks.at(ctxt.get_alignment()).x;
 }
 
@@ -817,6 +836,14 @@ void renderer::highlight_clickable_areas() {
 bool renderer::on(const signals::ui::request_snapshot& evt) {
   m_snapshot_dst = evt.cast();
   return true;
+}
+
+void renderer::apply_tray_position(const tags::context& context) {
+  auto [alignment, pos] = context.get_relative_tray_position();
+  if (alignment != alignment::NONE) {
+    int absolute_x = static_cast<int>(block_x(alignment) + pos);
+    m_sig.emit(signals::ui_tray::tray_pos_change{absolute_x});
+  }
 }
 
 POLYBAR_NS_END

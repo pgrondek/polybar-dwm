@@ -1,6 +1,7 @@
 #include "components/controller.hpp"
 
 #include <csignal>
+#include <cassert>
 #include <utility>
 
 #include "components/bar.hpp"
@@ -11,6 +12,7 @@
 #include "components/types.hpp"
 #include "events/signal.hpp"
 #include "events/signal_emitter.hpp"
+#include "modules/meta/all.hpp"
 #include "modules/meta/base.hpp"
 #include "modules/meta/event_handler.hpp"
 #include "modules/meta/factory.hpp"
@@ -25,13 +27,14 @@
 POLYBAR_NS
 
 using namespace eventloop;
+using namespace modules;
 
 /**
  * Build controller instance
  */
-controller::make_type controller::make(bool has_ipc, loop& loop) {
+controller::make_type controller::make(bool has_ipc, loop& loop, const config& config) {
   return std::make_unique<controller>(
-      connection::make(), signal_emitter::make(), logger::make(), config::make(), has_ipc, loop);
+      connection::make(), signal_emitter::make(), logger::make(), config, has_ipc, loop);
 }
 
 /**
@@ -44,13 +47,13 @@ controller::controller(
     , m_log(logger)
     , m_conf(config)
     , m_loop(loop)
-    , m_bar(bar::make(m_loop))
+    , m_bar(bar::make(m_loop, config))
     , m_has_ipc(has_ipc) {
-  m_conf.ignore_key("settings", "throttle-input-for");
-  m_conf.ignore_key("settings", "throttle-output");
-  m_conf.ignore_key("settings", "throttle-output-for");
-  m_conf.ignore_key("settings", "eventqueue-swallow");
-  m_conf.ignore_key("settings", "eventqueue-swallow-time");
+  m_conf.warn_deprecated("settings", "throttle-input-for");
+  m_conf.warn_deprecated("settings", "throttle-output");
+  m_conf.warn_deprecated("settings", "throttle-output-for");
+  m_conf.warn_deprecated("settings", "eventqueue-swallow");
+  m_conf.warn_deprecated("settings", "eventqueue-swallow-time");
 
   m_log.trace("controller: Setup user-defined modules");
   size_t created_modules{0};
@@ -98,27 +101,6 @@ bool controller::run(bool writeback, string snapshot_dst, bool confwatch) {
 
   m_sig.attach(this);
 
-  size_t started_modules{0};
-  for (const auto& module : m_modules) {
-    auto evt_handler = dynamic_cast<event_handler_interface*>(&*module);
-
-    if (evt_handler != nullptr) {
-      evt_handler->connect(m_connection);
-    }
-
-    try {
-      m_log.info("Starting %s", module->name());
-      module->start();
-      started_modules++;
-    } catch (const application_error& err) {
-      m_log.err("Failed to start '%s' (reason: %s)", module->name(), err.what());
-    }
-  }
-
-  if (!started_modules) {
-    throw application_error("No modules started");
-  }
-
   m_connection.flush();
 
   read_events(confwatch);
@@ -154,7 +136,7 @@ void controller::trigger_update(bool force) {
 }
 
 void controller::trigger_notification() {
-  m_notifier.send();
+  m_notifier->send();
 }
 
 void controller::stop(bool reload) {
@@ -171,7 +153,7 @@ void controller::conn_cb() {
   }
 
   shared_ptr<xcb_generic_event_t> evt{};
-  while ((evt = shared_ptr<xcb_generic_event_t>(xcb_poll_for_event(m_connection), free)) != nullptr) {
+  while ((evt = m_connection.poll_for_event()) != nullptr) {
     try {
       m_connection.dispatch_event(evt);
     } catch (xpp::connection_error& err) {
@@ -193,6 +175,16 @@ void controller::conn_cb() {
 void controller::signal_handler(int signum) {
   m_log.notice("Received signal(%d): %s", signum, strsignal(signum));
   stop(signum == SIGUSR1);
+}
+
+void controller::create_config_watcher(const string& filename) {
+  auto fs_event_handle = m_loop.handle<FSEventHandle>();
+  fs_event_handle->start(
+      filename, 0, [this](const auto& e) { confwatch_handler(e.path); },
+      [this, &handle = *fs_event_handle](const auto& e) {
+        m_log.err("libuv error while watching included file for changes: %s", uv_strerror(e.status));
+        handle.close();
+      });
 }
 
 void controller::confwatch_handler(const char* filename) {
@@ -230,51 +222,85 @@ void controller::screenshot_handler() {
   trigger_update(true);
 }
 
+void controller::start_modules() {
+  size_t started_modules{0};
+  for (const auto& module : m_modules) {
+    auto evt_handler = dynamic_cast<event_handler_interface*>(&*module);
+
+    if (evt_handler != nullptr) {
+      evt_handler->connect(m_connection);
+    }
+
+    try {
+      m_log.info("Starting %s", module->name());
+      module->start();
+      started_modules++;
+    } catch (const application_error& err) {
+      m_log.err("Failed to start '%s' (reason: %s)", module->name(), err.what());
+    }
+  }
+
+  if (!started_modules) {
+    throw application_error("No modules started");
+  }
+}
+
 /**
  * Read events from configured file descriptors
  */
 void controller::read_events(bool confwatch) {
   m_log.info("Entering event loop (thread-id=%lu)", this_thread::get_id());
 
-  try {
-    auto& poll_handle = m_loop.handle<PollHandle>(m_connection.get_file_descriptor());
-    poll_handle.start(
-        UV_READABLE, [this](const auto&) { conn_cb(); },
-        [this](const auto& e) {
-          m_log.err("libuv error while polling X connection: "s + uv_strerror(e.status));
-          stop(false);
-        });
+  if (!m_writeback) {
+    m_bar->start(m_tray_module_name);
+  }
 
-    for (auto s : {SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGALRM}) {
-      auto& signal_handle = m_loop.handle<SignalHandle>();
-      signal_handle.start(s, [this](const auto& e) { signal_handler(e.signum); });
-    }
+  start_modules();
 
-    if (confwatch) {
-      auto& fs_event_handle = m_loop.handle<FSEventHandle>();
-      fs_event_handle.start(
-          m_conf.filepath(), 0, [this](const auto& e) { confwatch_handler(e.path); },
-          [this, &fs_event_handle](const auto& e) {
-            m_log.err("libuv error while watching config file for changes: %s", uv_strerror(e.status));
-            fs_event_handle.close();
-          });
-    }
+  auto x_poll_handle = m_loop.handle<PollHandle>(m_connection.get_file_descriptor());
+  x_poll_handle->start(
+      UV_READABLE, [this](const auto&) { conn_cb(); },
+      [this](const auto& e) {
+        m_log.err("libuv error while polling X connection: "s + uv_strerror(e.status));
+        stop(false);
+      });
 
-    if (!m_snapshot_dst.empty()) {
-      // Trigger a single screenshot after 3 seconds
-      auto& timer_handle = m_loop.handle<TimerHandle>();
-      timer_handle.start(3000, 0, [this]() { screenshot_handler(); });
-    }
-
-    if (!m_writeback) {
-      m_bar->start();
-    }
-
+  auto x_prepare_handle = m_loop.handle<PrepareHandle>();
+  x_prepare_handle->start([this]() {
     /*
-     * Immediately trigger and update so that the bar displays something.
+     * We have to also handle events in the prepare handle (which runs right
+     * before polling for IO) to process any already queued X events which
+     * wouldn't trigger the uv_poll handle.
      */
-    trigger_update(true);
+    conn_cb();
+    m_connection.flush();
+  });
 
+  for (auto s : {SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGALRM}) {
+    auto signal_handle = m_loop.handle<SignalHandle>();
+    signal_handle->start(s, [this](const auto& e) { signal_handler(e.signum); });
+  }
+
+  if (confwatch) {
+    create_config_watcher(m_conf.filepath());
+    // also watch the include-files for changes
+    for (auto& module_path : m_conf.get_included_files()) {
+      create_config_watcher(module_path);
+    }
+  }
+
+  if (!m_snapshot_dst.empty()) {
+    // Trigger a single screenshot after 3 seconds
+    auto timer_handle = m_loop.handle<TimerHandle>();
+    timer_handle->start(3000, 0, [this]() { screenshot_handler(); });
+  }
+
+  /*
+   * Immediately trigger and update so that the bar displays something.
+   */
+  trigger_update(true);
+
+  try {
     m_loop.run();
   } catch (const exception& err) {
     m_log.err("Fatal Error in eventloop: %s", err.what());
@@ -602,14 +628,19 @@ size_t controller::setup_modules(alignment align) {
     try {
       auto type = m_conf.get("module/" + module_name, "type");
 
+      if (type == tray_module::TYPE) {
+        if (!m_tray_module_name.empty()) {
+          throw module_error("Multiple trays defined. Using tray `" + m_tray_module_name + "`");
+        }
+        m_tray_module_name = module_name;
+      }
+
       if (type == ipc_module::TYPE && !m_has_ipc) {
         throw application_error("Inter-process messaging needs to be enabled");
       }
 
       m_log.notice("Loading module '%s' of type '%s'", module_name, type);
-      auto ptr = make_module(move(type), m_bar->settings(), module_name, m_log);
-      module_t module = shared_ptr<modules::module_interface>(ptr);
-      ptr = nullptr;
+      module_t module = modules::make_module(move(type), m_bar->settings(), module_name, m_log, m_conf);
 
       m_modules.push_back(module);
       m_blocks[align].push_back(module);

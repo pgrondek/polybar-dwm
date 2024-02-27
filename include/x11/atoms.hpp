@@ -2,13 +2,15 @@
 
 #include <xcb/xcb_atom.h>
 
+#include <array>
+#include <string>
+
 struct cached_atom {
-  const char* name;
-  size_t len;
-  xcb_atom_t* atom;
+  const std::string name;
+  xcb_atom_t& atom;
 };
 
-extern cached_atom ATOMS[36];
+extern std::array<cached_atom, 38> ATOMS;
 
 extern xcb_atom_t _NET_SUPPORTED;
 extern xcb_atom_t _NET_CURRENT_DESKTOP;
@@ -46,3 +48,5 @@ extern xcb_atom_t ESETROOT_PMAP_ID;
 extern xcb_atom_t _COMPTON_SHADOW;
 extern xcb_atom_t _NET_WM_WINDOW_OPACITY;
 extern xcb_atom_t WM_HINTS;
+extern xcb_atom_t WM_NAME;
+extern xcb_atom_t WM_CLASS;

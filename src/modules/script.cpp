@@ -6,12 +6,15 @@
 POLYBAR_NS
 
 namespace modules {
-  script_module::script_module(const bar_settings& bar, string name_)
-      : module<script_module>(bar, move(name_))
+  script_module::script_module(const bar_settings& bar, string name_, const config& config)
+      : module<script_module>(bar, move(name_), config)
       , m_tail(m_conf.get(name(), "tail", false))
-      , m_interval(m_conf.get<script_runner::interval>(name(), "interval", m_tail ? 0s : 5s))
+      , m_interval_success(m_conf.get<script_runner::interval>(name(), "interval", m_tail ? 0s : 5s))
+      , m_interval_fail(m_conf.get<script_runner::interval>(name(), "interval-fail", m_interval_success))
+      , m_interval_if(m_conf.get<script_runner::interval>(name(), "interval-if", m_interval_success))
       , m_runner([this](const auto& data) { handle_runner_update(data); }, m_conf.get(name(), "exec", ""s),
-            m_conf.get(name(), "exec-if", ""s), m_tail, m_interval, m_conf.get_with_prefix(name(), "env-")) {
+            m_conf.get(name(), "exec-if", ""s), m_tail, m_interval_success, m_interval_fail,
+            m_conf.get_with_prefix(name(), "env-")) {
     // Load configured click handlers
     m_actions[mousebtn::LEFT] = m_conf.get(name(), "click-left", ""s);
     m_actions[mousebtn::MIDDLE] = m_conf.get(name(), "click-middle", ""s);
@@ -47,7 +50,7 @@ namespace modules {
             sleep_time = m_runner.process();
           } else {
             m_runner.clear_output();
-            sleep_time = std::max(m_interval, script_runner::interval(1s));
+            sleep_time = std::max(m_interval_if, script_runner::interval(1s));
           }
 
           if (m_runner.is_stopping()) {
@@ -83,14 +86,14 @@ namespace modules {
   }
 
   string script_module::get_output() {
-    auto data = [this]{
+    auto data = [this] {
       std::lock_guard<std::mutex> lk(m_data_mutex);
       return m_data;
     }();
 
     m_exit_status = data.exit_status;
 
-    if (data.output.empty()) {
+    if (data.output.empty() && m_exit_status == 0) {
       return "";
     }
 

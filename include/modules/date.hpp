@@ -6,18 +6,19 @@
 #include <iostream>
 
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 
 POLYBAR_NS
 
 namespace modules {
   class date_module : public timer_module<date_module> {
    public:
-    explicit date_module(const bar_settings&, string);
+    explicit date_module(const bar_settings&, string, const config&);
 
     bool update();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/date";
+    static constexpr auto TYPE = DATE_TYPE;
 
     static constexpr auto EVENT_TOGGLE = "toggle";
 

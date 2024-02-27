@@ -7,20 +7,28 @@
 #include "modules/meta/base.inl"
 #include "utils/file.hpp"
 
+#include <i3ipc++/ipc-util.hpp>
+
 POLYBAR_NS
 
 namespace modules {
   template class module<i3_module>;
 
-  i3_module::i3_module(const bar_settings& bar, string name_) : event_module<i3_module>(bar, move(name_)) {
+  i3_module::i3_module(const bar_settings& bar, string name_, const config& conf)
+      : event_module<i3_module>(bar, move(name_), conf) {
     m_router->register_action_with_data(EVENT_FOCUS, [this](const std::string& data) { action_focus(data); });
     m_router->register_action(EVENT_NEXT, [this]() { action_next(); });
     m_router->register_action(EVENT_PREV, [this]() { action_prev(); });
 
-    auto socket_path = i3ipc::get_socketpath();
-
-    if (!file_util::exists(socket_path)) {
-      throw module_error("Could not find socket: " + (socket_path.empty() ? "<empty>" : socket_path));
+    try {
+      auto socket_path = i3ipc::get_socketpath();
+      if (!file_util::exists(socket_path)) {
+        throw module_error("i3 socket does not exist: " + (socket_path.empty() ? "<empty>" : socket_path));
+      } else {
+        m_log.info("%s: Found i3 socket at '%s'", name(), socket_path);
+      }
+    } catch (const i3ipc::ipc_error& e) {
+      throw module_error("Could not find i3 socket: " + string(e.what()));
     }
 
     m_ipc = std::make_unique<i3ipc::connection>();

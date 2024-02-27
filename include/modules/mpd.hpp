@@ -4,6 +4,7 @@
 
 #include "adapters/mpd.hpp"
 #include "modules/meta/event_module.hpp"
+#include "modules/meta/types.hpp"
 #include "utils/env.hpp"
 
 POLYBAR_NS
@@ -13,7 +14,7 @@ using namespace mpd;
 namespace modules {
   class mpd_module : public event_module<mpd_module> {
    public:
-    explicit mpd_module(const bar_settings&, string);
+    explicit mpd_module(const bar_settings&, string, const config&);
 
     void teardown();
     inline bool connected() const;
@@ -24,7 +25,7 @@ namespace modules {
     string get_output();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/mpd";
+    static constexpr auto TYPE = MPD_TYPE;
 
     static constexpr const char* EVENT_PLAY = "play";
     static constexpr const char* EVENT_PAUSE = "pause";

@@ -8,4 +8,10 @@
 .tags
 *.user
 
+# clangd
+/.cache
+
 polybar-*.tar
+*.cache
+
+.venv

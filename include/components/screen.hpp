@@ -16,23 +16,16 @@ class logger;
 class connection;
 class signal_emitter;
 
-class screen : public xpp::event::sink<evt::randr_screen_change_notify> {
+class screen : public xpp::event::sink<evt::map_notify, evt::randr_screen_change_notify> {
  public:
   using make_type = unique_ptr<screen>;
-  static make_type make();
+  static make_type make(const config&);
 
   explicit screen(connection& conn, signal_emitter& emitter, const logger& logger, const config& conf);
   ~screen();
 
-  struct size size() const {
-    return m_size;
-  }
-
-  xcb_window_t root() const {
-    return m_root;
-  }
-
  protected:
+  void handle(const evt::map_notify& evt) override;
   void handle(const evt::randr_screen_change_notify& evt) override;
 
  private:
@@ -49,6 +42,12 @@ class screen : public xpp::event::sink<evt::randr_screen_change_notify> {
     0U, 0U
   };
   bool m_sigraised{false};
+
+  /**
+   * Original event mask on the root window.
+   * Used to restore event mask after the proxy window is mapped.
+   */
+  uint32_t m_root_mask{0};
 
   bool have_monitors_changed() const;
 };

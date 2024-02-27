@@ -2,6 +2,7 @@
 
 #include "modules/meta/event_handler.hpp"
 #include "modules/meta/static_module.hpp"
+#include "modules/meta/types.hpp"
 #include "x11/ewmh.hpp"
 
 POLYBAR_NS
@@ -44,13 +45,13 @@ namespace modules {
    */
   class xworkspaces_module : public static_module<xworkspaces_module>, public event_handler<evt::property_notify> {
    public:
-    explicit xworkspaces_module(const bar_settings& bar, string name_);
+    explicit xworkspaces_module(const bar_settings& bar, string name_, const config&);
 
     void update();
     string get_output();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/xworkspaces";
+    static constexpr auto TYPE = XWORKSPACES_TYPE;
 
     static constexpr auto EVENT_FOCUS = "focus";
     static constexpr auto EVENT_NEXT = "next";
@@ -83,7 +84,7 @@ namespace modules {
     static constexpr const char* TAG_LABEL_STATE{"<label-state>"};
 
     connection& m_connection;
-    ewmh_connection_t m_ewmh;
+    ewmh_util::ewmh_connection& m_ewmh;
 
     vector<monitor_t> m_monitors;
 
@@ -104,8 +105,9 @@ namespace modules {
     bool m_click{true};
     bool m_scroll{true};
     bool m_revscroll{false};
+    bool m_group_by_monitor{true};
     size_t m_index{0};
   };
-}  // namespace modules
+} // namespace modules
 
 POLYBAR_NS_END

@@ -8,6 +8,7 @@
 #include <mutex>
 
 #include "common.hpp"
+#include "components/config.hpp"
 #include "components/types.hpp"
 #include "errors.hpp"
 #include "utils/concurrency.hpp"
@@ -58,7 +59,6 @@ namespace modules {
 
   struct module_format {
     string value{};
-    vector<string> tags{};
     label_t prefix{};
     label_t suffix{};
     rgba fg{};
@@ -142,7 +142,7 @@ namespace modules {
   template <class Impl>
   class module : public module_interface {
    public:
-    module(const bar_settings& bar, string name);
+    module(const bar_settings& bar, string name, const config&);
     ~module() noexcept;
 
     static constexpr auto EVENT_MODULE_TOGGLE = "module_toggle";
@@ -189,7 +189,7 @@ namespace modules {
     string get_format() const;
     string get_output();
 
-    void set_visible(bool value);
+    virtual void set_visible(bool value);
 
     void action_module_toggle();
     void action_module_show();

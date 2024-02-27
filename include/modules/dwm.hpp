@@ -3,6 +3,7 @@
 #include <dwmipcpp/connection.hpp>
 
 #include "modules/meta/event_module.hpp"
+#include "modules/meta/types.hpp"
 
 POLYBAR_NS
 
@@ -46,7 +47,7 @@ namespace modules {
       label_t label;
     };
 
-    static constexpr auto TYPE = "internal/dwm";
+    static constexpr auto TYPE = DWM_TYPE;
 
     void stop() override;
     bool has_event();

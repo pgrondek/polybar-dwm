@@ -88,6 +88,19 @@ TEST(Rgba, hasColor) {
   EXPECT_FALSE(v.has_color());
 }
 
+TEST(Rgba, isTransparent) {
+  rgba v{"#123456"};
+  EXPECT_FALSE(v.is_transparent());
+
+  v = rgba{"#ff123456"};
+
+  EXPECT_FALSE(v.is_transparent());
+
+  v = rgba{"#fe123456"};
+
+  EXPECT_TRUE(v.is_transparent());
+}
+
 TEST(Rgba, channel) {
   rgba v{0xCC123456};
   EXPECT_EQ(0xCC, v.alpha_i());

@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     //==================================================
     if (cli->has("list-monitors") || cli->has("list-all-monitors")) {
       bool purge_clones = !cli->has("list-all-monitors");
-      auto monitors = randr_util::get_monitors(conn, conn.root(), true, purge_clones);
+      auto monitors = randr_util::get_monitors(conn, true, purge_clones);
       for (auto&& mon : monitors) {
         if (mon->output == XCB_NONE) {
           printf("%s: %ix%i+%i+%i (no output%s)\n", mon->name.c_str(), mon->w, mon->h, mon->x, mon->y,
@@ -127,8 +127,8 @@ int main(int argc, char** argv) {
       barname = cli->get(0);
     }
 
-    config_parser parser{logger, move(confpath), move(barname)};
-    config::make_type conf = parser.parse();
+    config_parser parser{logger, move(confpath)};
+    config conf = parser.parse(move(barname));
 
     //==================================================
     // Dump requested data
@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
       return EXIT_SUCCESS;
     }
     if (cli->has("print-wmname")) {
-      printf("%s\n", bar::make(loop, true)->settings().wmname.c_str());
+      printf("%s\n", bar::make(loop, conf, true)->settings().wmname.c_str());
       return EXIT_SUCCESS;
     }
 
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    auto ctrl = controller::make((bool)ipc, loop);
+    auto ctrl = controller::make((bool)ipc, loop, conf);
 
     if (!ctrl->run(cli->has("stdout"), cli->get("png"), cli->has("reload"))) {
       reload = true;

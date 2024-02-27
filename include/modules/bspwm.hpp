@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/event_module.hpp"
+#include "modules/meta/types.hpp"
 #include "utils/bspwm.hpp"
 
 POLYBAR_NS
@@ -39,7 +40,7 @@ namespace modules {
     };
 
    public:
-    explicit bspwm_module(const bar_settings&, string);
+    explicit bspwm_module(const bar_settings&, string, const config&);
 
     void stop() override;
     bool has_event();
@@ -47,7 +48,7 @@ namespace modules {
     string get_output();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/bspwm";
+    static constexpr auto TYPE = BSPWM_TYPE;
 
     static constexpr auto EVENT_FOCUS = "focus";
     static constexpr auto EVENT_NEXT = "next";

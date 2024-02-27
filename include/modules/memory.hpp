@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 #include "settings.hpp"
 
 POLYBAR_NS
@@ -10,13 +11,13 @@ namespace modules {
   enum class memory_state { NORMAL = 0, WARN };
   class memory_module : public timer_module<memory_module> {
    public:
-    explicit memory_module(const bar_settings&, string);
+    explicit memory_module(const bar_settings&, string, const config&);
 
     bool update();
     string get_format() const;
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/memory";
+    static constexpr auto TYPE = MEMORY_TYPE;
 
    private:
     static constexpr const char* TAG_LABEL{"<label>"};

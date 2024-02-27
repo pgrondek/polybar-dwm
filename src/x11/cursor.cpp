@@ -20,7 +20,7 @@ namespace cursor_util {
       return false;
     }
 
-    scope_util::on_exit<> handler([&] { xcb_cursor_context_free(ctx); });
+    scope_util::on_exit handler([&] { xcb_cursor_context_free(ctx); });
 
     xcb_cursor_t cursor = XCB_CURSOR_NONE;
     for (const auto& cursor_name : cursors.at(name)) {

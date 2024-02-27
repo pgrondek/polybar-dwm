@@ -12,6 +12,7 @@
 #include "events/signal_fwd.hpp"
 #include "events/signal_receiver.hpp"
 #include "utils/concurrency.hpp"
+#include "utils/mixins.hpp"
 #include "x11/atoms.hpp"
 #include "x11/connection.hpp"
 #include "x11/tray_client.hpp"
@@ -23,104 +24,116 @@
 #define SYSTEM_TRAY_BEGIN_MESSAGE 1
 #define SYSTEM_TRAY_CANCEL_MESSAGE 2
 
-#define TRAY_WM_NAME "Polybar tray window"
-#define TRAY_WM_CLASS "tray\0Polybar"
-
-#define TRAY_PLACEHOLDER "<placeholder-systray>"
-
 POLYBAR_NS
+
+// fwd declarations
+class connection;
+class bg_slice;
+
+namespace tray {
 
 namespace chrono = std::chrono;
 using namespace std::chrono_literals;
 using std::atomic;
 
-// fwd declarations
-class connection;
-class background_manager;
-class bg_slice;
-
 struct tray_settings {
-  alignment align{alignment::NONE};
-  bool running{false};
-  int rel_x{0};
-  int rel_y{0};
-  int orig_x{0};
-  int orig_y{0};
-  int configured_x{0};
-  int configured_y{0};
-  unsigned int configured_w{0U};
-  unsigned int configured_h{0U};
-  unsigned int configured_slots{0U};
-  unsigned int width{0U};
-  unsigned int width_max{0U};
-  unsigned int height{0U};
-  unsigned int height_fill{0U};
-  unsigned int spacing{0U};
-  unsigned int sibling{0U};
+  /**
+   * Dimensions for client windows.
+   */
+  size client_size{0, 0};
+
+  /**
+   * Number of pixels added between tray icons
+   */
+  unsigned spacing{0U};
+
+  /**
+   * Number of pixels added before and after each tray icon
+   */
+  unsigned padding{0U};
+
+  /**
+   * Background color used in the client wrapper window
+   *
+   * If transparent, pseudo-transparency is used for the icon.
+   */
   rgba background{};
+
+  /**
+   * Used for `_NET_SYSTEM_TRAY_COLORS` atom
+   *
+   * Is only a hint to the tray applications.
+   */
   rgba foreground{};
-  bool transparent{false};
-  bool detached{false};
+
+  /**
+   * Window ID of tray selection owner.
+   *
+   * Matches the bar window
+   */
+  xcb_window_t selection_owner{XCB_NONE};
 };
 
-class tray_manager : public xpp::event::sink<evt::expose, evt::visibility_notify, evt::client_message,
-                         evt::configure_request, evt::resize_request, evt::selection_clear, evt::property_notify,
-                         evt::reparent_notify, evt::destroy_notify, evt::map_notify, evt::unmap_notify>,
-                     public signal_receiver<SIGN_PRIORITY_TRAY, signals::ui::visibility_change, signals::ui::dim_window,
-                         signals::ui::update_background> {
+using on_update = std::function<void(void)>;
+
+class manager
+    : public xpp::event::sink<evt::expose, evt::client_message, evt::configure_request, evt::resize_request,
+          evt::selection_clear, evt::property_notify, evt::reparent_notify, evt::destroy_notify, evt::map_notify,
+          evt::unmap_notify>,
+      public signal_receiver<SIGN_PRIORITY_TRAY, signals::ui::update_background, signals::ui_tray::tray_pos_change>,
+      non_copyable_mixin,
+      non_movable_mixin {
  public:
-  using make_type = unique_ptr<tray_manager>;
-  static make_type make();
+  explicit manager(connection& conn, signal_emitter& emitter, const logger& logger, const bar_settings& bar_opts,
+      on_update on_update);
 
-  explicit tray_manager(connection& conn, signal_emitter& emitter, const logger& logger, background_manager& back);
+  ~manager() override;
 
-  ~tray_manager();
+  unsigned get_width() const;
 
-  const tray_settings settings() const;
-
-  void setup(const bar_settings& bar_opts);
+  void setup(const config& conf, const string& module_section_name);
   void activate();
-  void activate_delayed(chrono::duration<double, std::milli> delay = 1s);
-  void deactivate(bool clear_selection = true);
+  void wait_for_selection(xcb_window_t other);
+  void deactivate();
   void reconfigure();
 
+  bool is_active() const;
+  bool is_inactive() const;
+  bool is_waiting() const;
+
+  bool is_visible() const;
+
+  bool change_visibility(bool visible);
+
  protected:
-  void reconfigure_window();
+  void recalculate_width();
   void reconfigure_clients();
-  void reconfigure_bg(bool realloc = false);
-  void refresh_window();
-  void redraw_window(bool realloc_bg = false);
+  void redraw_clients();
 
   void query_atom();
-  void create_window();
-  void create_bg(bool realloc = false);
-  void restack_window();
-  void set_wm_hints();
   void set_tray_colors();
+  void set_tray_orientation();
+  void set_tray_visual();
 
-  void acquire_selection();
+  bool acquire_selection(xcb_window_t& other_owner);
   void notify_clients();
-  void notify_clients_delayed();
 
   void track_selection_owner(xcb_window_t owner);
   void process_docking_request(xcb_window_t win);
 
-  int calculate_x(unsigned width, bool abspos = true) const;
-  int calculate_y(bool abspos = true) const;
-  unsigned short int calculate_w() const;
-  unsigned short int calculate_h() const;
+  int calculate_x() const;
 
-  int calculate_client_x(const xcb_window_t& win);
+  unsigned calculate_w() const;
+
   int calculate_client_y();
 
-  bool is_embedded(const xcb_window_t& win) const;
-  shared_ptr<tray_client> find_client(const xcb_window_t& win) const;
-  void remove_client(shared_ptr<tray_client>& client, bool reconfigure = true);
-  void remove_client(xcb_window_t win, bool reconfigure = true);
-  unsigned int mapped_clients() const;
+  bool is_embedded(const xcb_window_t& win);
+  client* find_client(const xcb_window_t& win);
+  void remove_client(const client& client);
+  void remove_client(xcb_window_t win);
+  void clean_clients();
 
   void handle(const evt::expose& evt) override;
-  void handle(const evt::visibility_notify& evt) override;
   void handle(const evt::client_message& evt) override;
   void handle(const evt::configure_request& evt) override;
   void handle(const evt::resize_request& evt) override;
@@ -131,42 +144,69 @@ class tray_manager : public xpp::event::sink<evt::expose, evt::visibility_notify
   void handle(const evt::map_notify& evt) override;
   void handle(const evt::unmap_notify& evt) override;
 
-  bool on(const signals::ui::visibility_change& evt) override;
-  bool on(const signals::ui::dim_window& evt) override;
   bool on(const signals::ui::update_background& evt) override;
+  bool on(const signals::ui_tray::tray_pos_change& evt) override;
 
  private:
   connection& m_connection;
   signal_emitter& m_sig;
   const logger& m_log;
-  background_manager& m_background_manager;
-  std::shared_ptr<bg_slice> m_bg_slice;
-  vector<shared_ptr<tray_client>> m_clients;
+  vector<unique_ptr<client>> m_clients;
 
   tray_settings m_opts{};
+  const bar_settings& m_bar_opts;
 
-  xcb_gcontext_t m_gc{0};
-  xcb_pixmap_t m_pixmap{0};
-  unique_ptr<cairo::surface> m_surface;
-  unique_ptr<cairo::context> m_context;
+  const on_update m_on_update;
 
-  unsigned int m_prevwidth{0U};
-  unsigned int m_prevheight{0U};
+  enum class state {
+    /**
+     * The tray manager is completely deactivated and doesn't own any resources.
+     */
+    INACTIVE = 0,
+    /**
+     * There is currently another application owning the systray selection and the tray manager waits until the
+     * selection becomes available again.
+     *
+     * The signal receiver is detached in m_othermanager is set
+     */
+    WAITING,
+    /**
+     * The tray manager owns the systray selection.
+     *
+     * The signal receiver is attached
+     */
+    ACTIVE,
+  };
+  atomic<state> m_state{state::INACTIVE};
 
-  xcb_atom_t m_atom{0};
-  xcb_window_t m_tray{0};
-  xcb_window_t m_othermanager{0};
+  /**
+   * Systray selection atom _NET_SYSTEM_TRAY_Sn
+   */
+  xcb_atom_t m_atom{XCB_NONE};
 
-  atomic<bool> m_activated{false};
-  atomic<bool> m_mapped{false};
-  atomic<bool> m_hidden{false};
-  atomic<bool> m_acquired_selection{false};
+  /**
+   * Owner of systray selection (if we don't own it)
+   */
+  xcb_window_t m_othermanager{XCB_NONE};
 
-  thread m_delaythread;
+  /**
+   * Specifies the top-left corner of the tray area relative to inner area of the bar.
+   */
+  position m_pos{0, 0};
 
-  mutex m_mtx{};
+  /**
+   * Current width of the tray.
+   *
+   * Caches the value calculated from all mapped tray clients.
+   */
+  unsigned m_tray_width{0};
 
-  bool m_firstactivation{true};
+  /**
+   * Whether the tray is visible
+   */
+  bool m_hidden{false};
 };
+
+} // namespace tray
 
 POLYBAR_NS_END

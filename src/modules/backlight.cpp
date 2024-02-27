@@ -23,15 +23,36 @@ namespace modules {
     return std::strtof(file_util::contents(m_path).c_str(), nullptr);
   }
 
-  backlight_module::backlight_module(const bar_settings& bar, string name_)
-      : inotify_module<backlight_module>(bar, move(name_)) {
+  backlight_module::backlight_module(const bar_settings& bar, string name_, const config& config)
+      : inotify_module<backlight_module>(bar, move(name_), config) {
     m_router->register_action(EVENT_DEC, [this]() { action_dec(); });
     m_router->register_action(EVENT_INC, [this]() { action_inc(); });
+    auto card = m_conf.get(name(), "card", ""s);
+    if (card.empty()) {
+      vector<string> backlight_card_names = file_util::list_files(string_util::replace(PATH_BACKLIGHT, "%card%", ""));
+      backlight_card_names.erase(std::remove_if(backlight_card_names.begin(), backlight_card_names.end(),
+                                     [&](const string& card) -> bool {
+                                       auto dir = string_util::replace(PATH_BACKLIGHT, "%card%", card);
+                                       return !(file_util::is_file(dir + "/actual_brightness") &&
+                                                file_util::is_file(dir + "/brightness") &&
+                                                file_util::is_file(dir + "/max_brightness"));
+                                     }),
+          backlight_card_names.end());
 
-    auto card = m_conf.get(name(), "card");
-
+      if (backlight_card_names.empty()) {
+        throw module_error("no viable default backlight found");
+      }
+      card = backlight_card_names.at(0);
+      if (backlight_card_names.size() > 1) {
+        m_log.warn("%s: multiple backlights found, using %s", name(), card);
+      } else {
+        m_log.info("%s: no backlight specified, using `%s`", name(), card);
+      }
+    }
     // Get flag to check if we should add scroll handlers for changing value
     m_scroll = m_conf.get(name(), "enable-scroll", m_scroll);
+
+    m_scroll_interval = m_conf.get(name(), "scroll-interval", m_scroll_interval);
 
     // Add formats and elements
     m_formatter->add(DEFAULT_FORMAT, TAG_LABEL, {TAG_LABEL, TAG_BAR, TAG_RAMP});
@@ -49,13 +70,10 @@ namespace modules {
     // Build path to the sysfs folder the current/maximum brightness values are located
     m_path_backlight = string_util::replace(PATH_BACKLIGHT, "%card%", card);
 
-    /*
-     * amdgpu drivers set the actual_brightness in a different scale than [0, max_brightness]
-     * The only sensible way is to use the 'brightness' file instead
-     * Ref: https://github.com/Alexays/Waybar/issues/335
-     */
-    bool card_is_amdgpu = (card.substr(0, 9) == "amdgpu_bl");
-    m_use_actual_brightness = m_conf.get(name(), "use-actual-brightness", !card_is_amdgpu);
+    m_use_actual_brightness = m_conf.get(name(), "use-actual-brightness", m_use_actual_brightness);
+
+    m_interval = m_conf.get<decltype(m_interval)>(name(), "poll-interval", m_use_actual_brightness? 0s : 5s);
+    m_lastpoll = chrono::steady_clock::now();
 
     std::string brightness_type = (m_use_actual_brightness ? "actual_brightness" : "brightness");
     auto path_backlight_val = m_path_backlight + "/" + brightness_type;
@@ -68,23 +86,48 @@ namespace modules {
   }
 
   void backlight_module::idle() {
-    sleep(75ms);
+    if (m_interval.count() > 0) {
+      /*
+       * Update module after interval (if any).
+       * We don't always receive inotify events for the backlight files.
+       * Mainly, the `backlight` file never receive an event on modification.
+       * In that case, updating at an interval is the only way to get the new value.
+       */
+      auto now = chrono::steady_clock::now();
+      if (chrono::duration_cast<decltype(m_interval)>(now - m_lastpoll) > m_interval) {
+        m_lastpoll = now;
+        if (on_event({})) {
+          broadcast();
+        }
+      }
+    }
+
+    this->inotify_module::idle();
   }
 
-  bool backlight_module::on_event(inotify_event* event) {
-    if (event != nullptr) {
-      m_log.trace("%s: %s", name(), event->filename);
+  bool backlight_module::on_event(const inotify_event& event) {
+    if (event.is_valid) {
+      m_log.trace("%s: on_event{filename: %s, is_dir: %s, wd: %d, cookie: %d, mask: 0x%x}", name(), event.filename,
+          event.is_dir? "true" : "false", event.wd, event.cookie, event.mask);
     }
 
     m_max_brightness = m_max.read();
-    m_percentage = static_cast<int>(m_val.read() / m_max_brightness * 100.0f + 0.5f);
+    float val = m_val.read();
+    int percentage = math_util::percentage(val, m_max_brightness);
 
-    if (m_label) {
-      m_label->reset_tokens();
-      m_label->replace_token("%percentage%", to_string(m_percentage));
+    if (m_percentage != percentage) {
+      m_log.trace("%s: %d%% -> %d%% (val: %f, max: %f)", name(), m_percentage, percentage, val, m_max_brightness);
+      m_percentage = percentage;
+
+      if (m_label) {
+        m_label->reset_tokens();
+        m_label->replace_token("%percentage%", to_string(m_percentage));
+      }
+
+      return true;
     }
 
-    return true;
+    return false;
   }
 
   string backlight_module::get_output() {
@@ -120,11 +163,11 @@ namespace modules {
   }
 
   void backlight_module::action_inc() {
-    change_value(5);
+    change_value(m_scroll_interval);
   }
 
   void backlight_module::action_dec() {
-    change_value(-5);
+    change_value(-m_scroll_interval);
   }
 
   void backlight_module::change_value(int value_mod) {

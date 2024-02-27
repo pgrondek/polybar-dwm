@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdlib>
+#include <set>
 
 #include "common.hpp"
 #include "components/eventloop.hpp"
@@ -22,10 +23,12 @@ class connection;
 class logger;
 class renderer;
 class screen;
+namespace legacy_tray {
 class tray_manager;
+}
 
 namespace tags {
-  class dispatch;
+class dispatch;
 }
 // }}}
 
@@ -34,16 +37,15 @@ class bar : public xpp::event::sink<evt::button_press, evt::expose, evt::propert
             public signal_receiver<SIGN_PRIORITY_BAR, signals::ui::dim_window> {
  public:
   using make_type = unique_ptr<bar>;
-  static make_type make(eventloop::loop&, bool only_initialize_values = false);
+  static make_type make(eventloop::loop&, const config&, bool only_initialize_values = false);
 
   explicit bar(connection&, signal_emitter&, const config&, const logger&, eventloop::loop&, unique_ptr<screen>&&,
-      unique_ptr<tray_manager>&&, unique_ptr<tags::dispatch>&&, unique_ptr<tags::action_context>&&,
-      bool only_initialize_values);
+      unique_ptr<tags::dispatch>&&, unique_ptr<tags::action_context>&&, bool only_initialize_values);
   ~bar();
 
   const bar_settings& settings() const;
 
-  void start();
+  void start(const string& tray_module_name);
 
   void parse(string&& data, bool force = false);
 
@@ -92,7 +94,7 @@ class bar : public xpp::event::sink<evt::button_press, evt::expose, evt::propert
   const logger& m_log;
   eventloop::loop& m_loop;
   unique_ptr<screen> m_screen;
-  unique_ptr<tray_manager> m_tray;
+  unique_ptr<legacy_tray::tray_manager> m_tray;
   unique_ptr<renderer> m_renderer;
   unique_ptr<tags::dispatch> m_dispatch;
   unique_ptr<tags::action_context> m_action_ctxt;
@@ -105,12 +107,12 @@ class bar : public xpp::event::sink<evt::button_press, evt::expose, evt::propert
   string m_cursor{};
 
   string m_lastinput{};
-  bool m_dblclicks{false};
+  std::set<mousebtn> m_dblclicks;
 
-  eventloop::TimerHandle& m_leftclick_timer{m_loop.handle<eventloop::TimerHandle>()};
-  eventloop::TimerHandle& m_middleclick_timer{m_loop.handle<eventloop::TimerHandle>()};
-  eventloop::TimerHandle& m_rightclick_timer{m_loop.handle<eventloop::TimerHandle>()};
-  eventloop::TimerHandle& m_dim_timer{m_loop.handle<eventloop::TimerHandle>()};
+  eventloop::timer_handle_t m_leftclick_timer{m_loop.handle<eventloop::TimerHandle>()};
+  eventloop::timer_handle_t m_middleclick_timer{m_loop.handle<eventloop::TimerHandle>()};
+  eventloop::timer_handle_t m_rightclick_timer{m_loop.handle<eventloop::TimerHandle>()};
+  eventloop::timer_handle_t m_dim_timer{m_loop.handle<eventloop::TimerHandle>()};
 
   bool m_visible{true};
 };

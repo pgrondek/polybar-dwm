@@ -3,6 +3,7 @@
 #include <istream>
 
 #include "modules/meta/timer_module.hpp"
+#include "modules/meta/types.hpp"
 #include "settings.hpp"
 
 POLYBAR_NS
@@ -12,13 +13,13 @@ namespace modules {
 
   class temperature_module : public timer_module<temperature_module> {
    public:
-    explicit temperature_module(const bar_settings&, string);
+    explicit temperature_module(const bar_settings&, string, const config&);
 
     bool update();
     string get_format() const;
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/temperature";
+    static constexpr auto TYPE = TEMPERATURE_TYPE;
 
    private:
     static constexpr auto TAG_LABEL = "<label>";
@@ -30,6 +31,7 @@ namespace modules {
     ramp_t m_ramp;
 
     string m_path;
+    string m_zone_type;
     int m_zone = 0;
     // Base temperature used for where to start the ramp
     int m_tempbase = 0;

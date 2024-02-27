@@ -65,6 +65,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/i3`: module errors when i3 has negative gaps ([`#2888`](https://github.com/polybar/polybar/issues/2888), [`#2889`](https://github.com/polybar/polybar/pull/2889))
 - `wm-restack = bspwm`: bar may become unclickable if there are overlapping monitors ([`#2873`](https://github.com/polybar/polybar/issues/2873), [`#2961`](https://github.com/polybar/polybar/pull/2961))
 
+## [3.7.1] - 2023-11-27
+### Build
+- Fixed missing header when using `libc++` in clang 15 and below
+
+### Changed
+- `internal/tray`: The module must use the `<tray>` tag (this is the default) ([`#3037`](https://github.com/polybar/polybar/pull/3037))
+
+## Fixed
+- Modules did not validate that all tags (e.g. `<label>`) used in a format were valid for that format ([`#3043`](https://github.com/polybar/polybar/issues/3043), [`#3045`](https://github.com/polybar/polybar/pull/3045))
+- `internal/tray`: Fixed `module-margin` and `separator` being applied to completely empty tray module ([`#3036`](https://github.com/polybar/polybar/issues/3036), [`#3037`](https://github.com/polybar/polybar/pull/3037))
+
+## [3.7.0] - 2023-11-05
+### Breaking
+- `custom/script`:
+  - No longer hides the module if the `exec` command failed and did not change the output from the previous run ([`#2636`](https://github.com/polybar/polybar/issues/2636)). Somewhat similar original behaviour can be imitated with `format-fail`, if necessary.
+  - If the `exec` command produced no output and exited with a non-zero exit code the module is no longer completely empty, but just has an empty `%output%` token. If you relied on this behavior to hide the module under certain circumstances, make sure the script exits with an exit code of zero. ([`#2857`](https://github.com/polybar/polybar/discussions/2857), [`#2861`](https://github.com/polybar/polybar/pull/2861))
+
+### Build
+- Respect `CMAKE_INSTALL_PREFIX` when installing default config ([`#2770`](https://github.com/polybar/polybar/pull/2770), [`#2917`](https://github.com/polybar/polybar/pull/2917))
+- Change default `CMAKE_INSTALL_PREFIX` to `/usr`. Installations with default flags will now go into `/usr` instead of `/usr/local` ([`#2917`](https://github.com/polybar/polybar/pull/2917))
+- Bump C++ version to C++17 ([`#2847`](https://github.com/polybar/polybar/pull/2847))
+
+### Deprecated
+- `custom/text`: The `content` setting and all its properties are deprecated in favor of `format` with the same functionality. ([`#2676`](https://github.com/polybar/polybar/pull/2676))
+- tray: All tray-related settings in the bar section are deprecated. They are replaced by the new tray module ([`#3002`](https://github.com/polybar/polybar/pull/3002))
+  - `tray-position`, `tray-detached`, `tray-maxsize`, `tray-scale`, `tray-transparent`, `tray-background`, `tray-foreground`, `tray-padding`, `tray-offset-x`, `tray-offset-y`
+
+### Added
+- A tray module with type `internal/tray` for positioning the tray like a module ([`#2689`](https://github.com/polybar/polybar/issues/2689))
+- `internal/temperature`: `%temperature-k%` token displays the temperature in degrees Kelvin ([`#2774`](https://github.com/polybar/polybar/discussions/2774), [`#2784`](https://github.com/polybar/polybar/pull/2784))
+- `internal/pulseaudio`: `reverse-scroll` option ([`#2664`](https://github.com/polybar/polybar/pull/2664))
+- `custom/script`: Repeat interval for script failure (`interval-fail`) and `exec-if` (`interval-if`) ([`#943`](https://github.com/polybar/polybar/issues/943), [`#2606`](https://github.com/polybar/polybar/issues/2606), [`#2630`](https://github.com/polybar/polybar/pull/2630))
+- `custom/ipc`:
+  - Added support for `<label>` in `format` ([`#2841`](https://github.com/polybar/polybar/pull/2841)) by [@madhavpcm](https://github.com/madhavpcm).
+  - Added support for `format-i` for each defined `hook-i` ([`#2775`](https://github.com/polybar/polybar/issues/2775), [`#2810`](https://github.com/polybar/polybar/pull/2810)) by [@madhavpcm](https://github.com/madhavpcm).
+- `custom/text`: Loads the `format` setting, which supports the `<label>` tag, if the deprecated `content` is not defined ([`#1331`](https://github.com/polybar/polybar/issues/1331), [`#2673`](https://github.com/polybar/polybar/pull/2673), [`#2676`](https://github.com/polybar/polybar/pull/2676))
+- `internal/backlight`:
+  - `scroll-interval` option ([`#2696`](https://github.com/polybar/polybar/issues/2696), [`#2700`](https://github.com/polybar/polybar/pull/2700))
+  - `poll-interval` setting controls how often the module is updated (in case it does not happen when the brightness changes) ([`#2835`](https://github.com/polybar/polybar/issues/2835), [`#3028`](https://github.com/polybar/polybar/pull/3028))
+- `internal/temperature`: Added `zone-type` setting ([`#2572`](https://github.com/polybar/polybar/issues/2572), [`#2752`](https://github.com/polybar/polybar/pull/2752)) by [@xphoniex](https://github.com/xphoniex)
+- `internal/xwindow`: `%class%` and `%instance%` tokens, which show the contents of the `WM_CLASS` property of the active window ([`#2830`](https://github.com/polybar/polybar/pull/2830))
+- Added `enable-struts` option in bar section to enable/disable struts ([`#2769`](https://github.com/polybar/polybar/issues/2769), [`#2844`](https://github.com/polybar/polybar/pull/2844)) by [@VanillaViking](https://github.com/VanillaViking).
+- `wm-restack`:
+  - `bottom`: lowers polybar to the bottom of the window stack (same as the previous behavior of `generic`) ([`#2961`](https://github.com/polybar/polybar/pull/2961))
+  - `ewmh`: Tries to use the `_NET_SUPPORTING_WM_CHECK` hint to position the bar ([`#2961`](https://github.com/polybar/polybar/pull/2961))
+- `internal/xworkspaces`: `group-by-monitor` setting to decide whether `_NET_DESKTOP_VIEWPORT` should be used to group workspaces by monitor; ([`#2603`](https://github.com/polybar/polybar/issues/2603), [`#2926`](https://github.com/polybar/polybar/pull/2926)) by [@slotThe](https://github.com/slotThe/).
+
+### Changed
+- `custom/script`:
+  - No longer produces a completely empty module if the `exec` command failed. It only produces an empty module if the script had a zero exit code. ([`#2857`](https://github.com/polybar/polybar/discussions/2857), [`#2861`](https://github.com/polybar/polybar/pull/2861))
+  - Bumped the script polling interval (not related to the `interval` setting) to decrease wakeups. Polybar may take slightly longer to shut down. [`#2879`](https://github.com/polybar/polybar/pull/2879)
+- `internal/fs`: Use `/` as a fallback if no mountpoints are specified ([`#2572`](https://github.com/polybar/polybar/issues/2572), [`#2705`](https://github.com/polybar/polybar/pull/2705))
+- `internal/backlight`:
+  - Detect backlight if none specified ([`#2572`](https://github.com/polybar/polybar/issues/2572), [`#2728`](https://github.com/polybar/polybar/pull/2728))
+  - `use-actual-brightness` now always defaults to `true` (even for `amdgpu` backlights) ([`#2835`](https://github.com/polybar/polybar/issues/2835), [`2839`](https://github.com/polybar/polybar/pull/2839))
+- Providing a negative min-width to a token adds right-padding ([`#2789`](https://github.com/polybar/polybar/issues/2789), [`#2801`](https://github.com/polybar/polybar/pull/2801)) by [@VanillaViking](https://github.com/VanillaViking).
+- Changed fuzzy match option on i3 and bspwm modules to find longest match instead of the first match ([`#2831`](https://github.com/polybar/polybar/pull/2831), [`#2829`](https://github.com/polybar/polybar/issues/2829)) by [@Ron0Studios](https://github.com/ron0studios/).
+- `wm-restack`
+  - `generic`: Is now a best effort combination of other restacking strategies. First tries `ewmh` and then the `bottom` strategy ([`#2961`](https://github.com/polybar/polybar/pull/2961))
+  - `bspwm`: Will restack above the topmost bspwm root window instead of the root window associated with the monitor polybar is on ([`#3019`](https://github.com/polybar/polybar/pull/3019))
+
+### Fixed
+- Waiting for double click interval on modules that don't have a double click action ([`#2663`](https://github.com/polybar/polybar/issues/2663), [`#2695`](https://github.com/polybar/polybar/pull/2695))
+- renderer:
+  - Small gaps when rendering emojis ([`#2785`](https://github.com/polybar/polybar/issues/2785), [`#2802`](https://github.com/polybar/polybar/pull/2802))
+  - Crash when using pseudo-transparency with certain wallpapers ([`#2798`](https://github.com/polybar/polybar/issues/2798), [`#2813`](https://github.com/polybar/polybar/pull/2813))
+  - Crash when invalid UTF-8 text is encountered ([`#2091`](https://github.com/polybar/polybar/issues/2091), [`#2958`](https://github.com/polybar/polybar/pull/2958))
+- config:
+  - Error reporting for deprecated config values ([`#2724`](https://github.com/polybar/polybar/issues/2724))
+  - Also monitor include-files for changes when --reload is set ([`#675`](https://github.com/polybar/polybar/issues/675), [`#2759`](https://github.com/polybar/polybar/pull/2759))
+- `internal/xwindow`: module does not crash when a tag is not provided in format ([`#2826`](https://github.com/polybar/polybar/issues/2826), [`#2833`](https://github.com/polybar/polybar/pull/2833)) by [@VanillaViking](https://github.com/VanillaViking)
+- `internal/i3`: module errors when i3 has negative gaps ([`#2888`](https://github.com/polybar/polybar/issues/2888), [`#2889`](https://github.com/polybar/polybar/pull/2889))
+- `internal/backlight`: Fix module being one step behind every update ([`#2835`](https://github.com/polybar/polybar/issues/2835), [`#3028`](https://github.com/polybar/polybar/pull/3028))
+- `wm-restack = bspwm`: bar may become unclickable if there are overlapping monitors ([`#2873`](https://github.com/polybar/polybar/issues/2873), [`#2961`](https://github.com/polybar/polybar/pull/2961))
+
 ## [3.6.3] - 2022-05-04
 ### Fixed
 - `custom/script`: Output clearing when `exec-if` fails ([`#2674`](https://github.com/polybar/polybar/issues/2674))
@@ -101,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - We added the backslash escape character (\\) for configuration values. This means that the literal backslash character now has special meaning in configuration files, therefore if you want to use it in a value as a literal backslash, you need to escape it with the backslash escape character. The parser logs an error if any unescaped backslashes are found in a value. This affects you only if you are using two consecutive backslashes in a config value, which will now be interpreted as a single literal backslash. ([`#2354`](https://github.com/polybar/polybar/issues/2354))
 - We rewrote our formatting tag parser. This shouldn't break anything, if you experience any problems, please let us know. The new parser now gives errors for certain invalid tags where the old parser would just silently ignore them. Adding extra text to the end of a valid tag now produces an error. For example, tags like `%{T-a}`, `%{T2abc}`, `%{rfoo}`, and others will now start producing errors. This does not affect you unless you are producing your own invalid formatting tags (for example in a script).
 - For security reasons, the named pipe at `/tmp/polybar_mqueue.<PID>` had its permission bits changed from `666` to `600` to prevent sending ipc messages to polybar processes running under a different user.
-- Also for security reasons, the `polybar-msg` command will now only send messages to polybar processes running under the same user. See the [IPC documentation](https://polybar.readthedocs.io/en/stable/user/ipc.html) for what exactly this means.
+- Also for security reasons, the `polybar-msg` command will now only send messages to polybar processes running under the same user. See the [IPC documentation](https://polybar.readthedocs.io/user/ipc.html) for what exactly this means.
 
 ### Build
 - New dependency: [libuv](https://github.com/libuv/libuv). At least version 1.3 is required.
@@ -238,7 +313,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Empty color values are no longer treated as invalid and no longer produce an error.
 
-[Unreleased]: https://github.com/polybar/polybar/compare/3.6.3...HEAD
+[Unreleased]: https://github.com/polybar/polybar/compare/3.7.1...HEAD
+[3.7.1]: https://github.com/polybar/polybar/releases/tag/3.7.1
+[3.7.0]: https://github.com/polybar/polybar/releases/tag/3.7.0
 [3.6.3]: https://github.com/polybar/polybar/releases/tag/3.6.3
 [3.6.2]: https://github.com/polybar/polybar/releases/tag/3.6.2
 [3.6.1]: https://github.com/polybar/polybar/releases/tag/3.6.1

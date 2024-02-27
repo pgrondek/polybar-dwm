@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/meta/event_module.hpp"
+#include "modules/meta/types.hpp"
 #include "settings.hpp"
 
 POLYBAR_NS
@@ -20,7 +21,7 @@ namespace modules {
 
   class alsa_module : public event_module<alsa_module> {
    public:
-    explicit alsa_module(const bar_settings&, string);
+    explicit alsa_module(const bar_settings&, string, const config&);
 
     void teardown();
     bool has_event();
@@ -29,7 +30,7 @@ namespace modules {
     string get_output();
     bool build(builder* builder, const string& tag) const;
 
-    static constexpr auto TYPE = "internal/alsa";
+    static constexpr auto TYPE = ALSA_TYPE;
 
     static constexpr auto EVENT_INC = "inc";
     static constexpr auto EVENT_DEC = "dec";
